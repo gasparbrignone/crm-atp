@@ -1,5 +1,13 @@
 import { redirect } from "next/navigation";
-import { MdSpaceDashboard, MdGroup, MdUploadFile, MdLogout, MdEvent, MdAdminPanelSettings } from "react-icons/md";
+import {
+  MdSpaceDashboard,
+  MdGroup,
+  MdUploadFile,
+  MdLogout,
+  MdEvent,
+  MdAdminPanelSettings,
+  MdHowToVote,
+} from "react-icons/md";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Sidebar, type EnlaceNav } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
@@ -27,6 +35,12 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     etiqueta: "Actividades",
     icono: <MdEvent size={18} />,
     permiso: "actividades.ver",
+  },
+  {
+    href: "/punteo",
+    etiqueta: "Punteo",
+    icono: <MdHowToVote size={18} />,
+    permiso: "punteo.ver_propio",
   },
   {
     href: "/importar",

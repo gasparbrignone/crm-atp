@@ -198,6 +198,17 @@ const TIPOS_ACTIVIDAD = [
   { nombre: "Jornada", color: "#a16207", orden: 7 },
 ] as const;
 
+// Catálogo inicial de ClasificacionPunteo — /08-modulo-punteo-electoral.md
+// sección 6: valores iniciales de referencia, taxonomía administrable (es una
+// decisión política de la organización, no técnica), catálogo no cerrado.
+const CLASIFICACIONES_PUNTEO = [
+  { nombre: "Sin contactar", color: "#64748b", orden: 1 },
+  { nombre: "Favorable", color: "#16a34a", orden: 2 },
+  { nombre: "Indeciso", color: "#ca8a04", orden: 3 },
+  { nombre: "Desfavorable", color: "#b91c1c", orden: 4 },
+  { nombre: "No ubicable", color: "#78716c", orden: 5 },
+] as const;
+
 async function main() {
   console.log("Sembrando catálogo de carreras...");
   for (const carrera of CARRERAS) {
@@ -214,6 +225,15 @@ async function main() {
       where: { nombre: tipo.nombre },
       update: {},
       create: tipo,
+    });
+  }
+
+  console.log("Sembrando catálogo de clasificaciones de punteo...");
+  for (const clasificacion of CLASIFICACIONES_PUNTEO) {
+    await prisma.clasificacionPunteo.upsert({
+      where: { nombre: clasificacion.nombre },
+      update: {},
+      create: clasificacion,
     });
   }
 

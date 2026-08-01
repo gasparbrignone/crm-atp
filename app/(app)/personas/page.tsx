@@ -72,7 +72,7 @@ export default async function PersonasPage({
 
       <Card padding="chico">
         <form className="flex flex-wrap items-end gap-3" action="/personas">
-          <div className="min-w-[220px] flex-1">
+          <div className="w-full sm:min-w-[220px] sm:flex-1">
             <Input
               name="q"
               placeholder="Buscar por nombre, apellido, DNI o legajo"

@@ -7,6 +7,7 @@ import {
   MdEvent,
   MdAdminPanelSettings,
   MdHowToVote,
+  MdFactCheck,
 } from "react-icons/md";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Sidebar, type EnlaceNav } from "@/components/layout/Sidebar";
@@ -41,6 +42,12 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     etiqueta: "Punteo",
     icono: <MdHowToVote size={18} />,
     permiso: "punteo.ver_propio",
+  },
+  {
+    href: "/padron",
+    etiqueta: "Padrón",
+    icono: <MdFactCheck size={18} />,
+    permiso: "padron.ver",
   },
   {
     href: "/importar",

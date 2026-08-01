@@ -462,6 +462,7 @@ model PadronEntrada {
   persona                Persona?             @relation(fields: [personaId], references: [id])
   estadoMatching         EstadoMatchingPadron @default(pendiente)
   confianzaMatching      Decimal?             @db.Decimal(3, 2)
+  candidatosSugeridos    String?
 
   @@index([padronElectoralId])
   @@index([dni])

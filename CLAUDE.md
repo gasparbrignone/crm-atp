@@ -77,9 +77,15 @@ Detalle completo y justificación en `03-arquitectura.md`.
 - Todo lo de IA vive en `lib/ia/`, con `cliente-anthropic.ts` como única puerta de configuración del cliente.
 - Cada servicio en `lib/servicios/` corresponde 1 a 1 con un módulo funcional documentado (ver tabla en `03-arquitectura.md` sección 6).
 
-## 3.0 Nota: migraciones que usan `auth.uid()` (RLS de Supabase)
+## 3.0 Nota: migraciones que usan `auth.*`/`storage.*` (Supabase) rompen el flujo normal de Prisma
 
-La base de sombra que usa `prisma migrate dev` para detectar drift es un Postgres vacío sin el schema `auth` que provee Supabase — cualquier migración con `auth.uid()` u otras funciones de `auth.*` falla ahí con `schema "auth" does not exist`, aunque la base real sí lo tenga. Para migraciones que tocan RLS/políticas con `auth.*`: generarlas con `prisma migrate dev --create-only`, escribir el SQL a mano, y aplicarlas con `npx prisma migrate deploy` (que no pasa por la base de sombra), no con `prisma migrate dev`. Ver `prisma/sql/0001_rls_persona_punteo.sql` como referencia. También: los IDs del modelo son `String` (TEXT en Postgres, no `uuid` nativo), así que toda comparación contra `auth.uid()` necesita `::text`.
+La base de sombra que usa `prisma migrate dev` (incluso con `--create-only`, porque igual valida el historial completo contra la sombra antes de crear la migración nueva) es un Postgres vacío sin los schemas `auth`/`storage` que provee Supabase — en cuanto el historial de migraciones incluye una que usa `auth.uid()`, `storage.buckets`, etc., **todo** comando `migrate dev` posterior falla con `schema "auth" does not exist`, aunque la base real sí los tenga. A partir de la migración `0001_rls_persona_punteo`, el flujo para cualquier migración nueva con SQL específico de Supabase es:
+1. Crear la carpeta a mano: `prisma/migrations/<timestamp-UTC-YYYYMMDDHHMMSS>_<nombre>/migration.sql` (no uses `prisma migrate dev --create-only`, va a fallar).
+2. Escribir el SQL en ese archivo (ver `prisma/sql/*.sql` como fuente editable de referencia).
+3. Aplicar con `npx prisma migrate deploy` (no pasa por la base de sombra).
+4. Verificar con `npx prisma migrate status`.
+
+También: los IDs del modelo son `String` (TEXT en Postgres, no `uuid` nativo), así que toda comparación contra `auth.uid()` necesita `::text`.
 
 ## 3.1 Nota de versión: Next.js 16 usa `proxy.ts`, no `middleware.ts`
 

@@ -174,7 +174,26 @@ const MATRIZ_PERMISOS_POR_ROL: Record<(typeof ROLES)[number]["nombre"], string[]
   Lectura: ["personas.ver", "actividades.ver", "padron.ver", "buscador.usar"],
 };
 
+// Catálogo inicial de Carrera — supuesto S1 de /01-vision-alcance.md sección 9:
+// lista de referencia editable desde Configuración, no cerrada. ATP puede
+// agregar/desactivar carreras sin tocar código.
+const CARRERAS = [
+  { nombre: "Medicina", duracionAnios: 6, orden: 1 },
+  { nombre: "Licenciatura en Enfermería", duracionAnios: 4, orden: 2 },
+  { nombre: "Fonoaudiología", duracionAnios: 5, orden: 3 },
+  { nombre: "Licenciatura en Terapia Ocupacional", duracionAnios: 4, orden: 4 },
+] as const;
+
 async function main() {
+  console.log("Sembrando catálogo de carreras...");
+  for (const carrera of CARRERAS) {
+    await prisma.carrera.upsert({
+      where: { nombre: carrera.nombre },
+      update: {},
+      create: carrera,
+    });
+  }
+
   console.log("Sembrando catálogo de permisos...");
   for (const permiso of PERMISOS) {
     await prisma.permiso.upsert({

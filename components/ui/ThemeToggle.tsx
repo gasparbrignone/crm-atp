@@ -10,7 +10,12 @@ export function ThemeToggle() {
   const [tema, setTema] = useState<Tema | null>(null);
 
   useEffect(() => {
+    // Lectura única de localStorage/matchMedia (sistemas externos al render de
+    // React) al montar, para no divergir del HTML servido por el servidor
+    // (que no puede conocer la preferencia guardada en el navegador) y evitar
+    // un mismatch de hidratación.
     const guardado = localStorage.getItem("tema") as Tema | null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTema(
       guardado ??
         (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"),

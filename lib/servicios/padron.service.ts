@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
+import { leerEntradasPadronPdf } from "@/lib/ia/lectura-padron-pdf";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 
 // Padrón electoral — /09-modulo-padron-electoral.md. Un único padrón `activo`
@@ -88,6 +89,81 @@ export async function crearPadronElectoral(
   return padron;
 }
 
+const UMBRAL_CONFIANZA_EXTRACCION = 0.75;
+
+interface DatosEntradaPadron {
+  dni: string;
+  nombreCompletoOriginal: string;
+  carreraTextoOriginal?: string | null;
+  // Solo presente en lecturas de PDF (/15-ia.md sección 4) — qué tan segura
+  // está la IA de haber leído bien la fila, distinto de la confianza de
+  // matching. Ausente para CSV, donde el dato ya viene como texto exacto.
+  confianzaExtraccion?: number;
+}
+
+// Resuelve el estado de matching de una entrada nueva, combinando el
+// resultado de buscarPersonaParaEntradaPadron() con la confianza de
+// extracción cuando corresponde (PDF): una lectura insegura del documento
+// nunca se vincula sola, aunque el nombre matchee perfecto — hay que mirar
+// el original antes de confiar en el dato (/15-ia.md sección 4.2).
+async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMatching: number) {
+  const resultadoMatching = await buscarPersonaParaEntradaPadron(
+    { dni: datos.dni, nombreCompletoOriginal: datos.nombreCompletoOriginal },
+    umbralMatching,
+  );
+
+  const extraccionDudosa =
+    datos.confianzaExtraccion !== undefined && datos.confianzaExtraccion < UMBRAL_CONFIANZA_EXTRACCION;
+
+  if (extraccionDudosa) {
+    let candidatos: { id: string; nombre: string; apellido: string; dni: string | null }[] = [];
+    if (resultadoMatching.tipo === "vinculado_automatico") {
+      const persona = await prisma.persona.findUnique({
+        where: { id: resultadoMatching.personaId },
+        select: { id: true, nombre: true, apellido: true, dni: true },
+      });
+      if (persona) candidatos = [persona];
+    } else if (resultadoMatching.tipo === "pendiente") {
+      candidatos = resultadoMatching.candidatos;
+    }
+    const motivo = `Lectura insegura del documento (confianza de extracción: ${Math.round(
+      (datos.confianzaExtraccion ?? 0) * 100,
+    )}%). Revisá el dato contra el PDF original antes de confirmar.`;
+    return {
+      estadoMatching: "pendiente" as const,
+      personaId: null,
+      confianzaMatching: null,
+      candidatosSugeridos: JSON.stringify({ motivo, candidatos }),
+    };
+  }
+
+  if (resultadoMatching.tipo === "vinculado_automatico") {
+    return {
+      estadoMatching: "vinculado_automatico" as const,
+      personaId: resultadoMatching.personaId,
+      confianzaMatching: resultadoMatching.confianza,
+      candidatosSugeridos: null,
+    };
+  }
+  if (resultadoMatching.tipo === "sin_coincidencia") {
+    return {
+      estadoMatching: "sin_coincidencia" as const,
+      personaId: null,
+      confianzaMatching: null,
+      candidatosSugeridos: null,
+    };
+  }
+  return {
+    estadoMatching: "pendiente" as const,
+    personaId: null,
+    confianzaMatching: null,
+    candidatosSugeridos: JSON.stringify({
+      motivo: resultadoMatching.motivo,
+      candidatos: resultadoMatching.candidatos,
+    }),
+  };
+}
+
 interface ImportarEntradasPadronInput {
   padronId: string;
   usuarioId: string;
@@ -96,10 +172,7 @@ interface ImportarEntradasPadronInput {
   mapeo: Record<string, CampoPadronImportable | "">;
 }
 
-// Carga de un padrón vía CSV/Excel exportado — la lectura nativa de PDF
-// (/15-ia.md sección 4) queda para la Fase 7 (importaciones avanzadas), ver
-// /20-roadmap.md. El archivo original se conserva en Storage de forma
-// indefinida mientras exista el PadronElectoral (sección 9).
+// Carga de un padrón vía CSV/Excel exportado.
 export async function importarEntradasPadronCsv({
   padronId,
   usuarioId,
@@ -145,8 +218,8 @@ export async function importarEntradasPadronCsv({
       continue;
     }
 
-    const resultadoMatching = await buscarPersonaParaEntradaPadron(
-      { dni: datos.dni, nombreCompletoOriginal },
+    const datosMatching = await resolverDatosMatchingEntrada(
+      { dni: datos.dni, nombreCompletoOriginal, carreraTextoOriginal: datos.carrera },
       umbral,
     );
 
@@ -156,15 +229,7 @@ export async function importarEntradasPadronCsv({
         dni: datos.dni,
         nombreCompletoOriginal,
         carreraTextoOriginal: datos.carrera ?? null,
-        personaId: resultadoMatching.tipo === "vinculado_automatico" ? resultadoMatching.personaId : null,
-        estadoMatching: resultadoMatching.tipo === "vinculado_automatico" ? "vinculado_automatico" : resultadoMatching.tipo,
-        confianzaMatching:
-          resultadoMatching.tipo === "vinculado_automatico" ? resultadoMatching.confianza : null,
-        // Candidatos sugeridos por la IA para "pendiente" — se guardan para
-        // poder mostrar la ficha candidata lado a lado en la revisión manual
-        // (sección 6) sin tener que volver a llamar a la IA.
-        candidatosSugeridos:
-          resultadoMatching.tipo === "pendiente" ? JSON.stringify(resultadoMatching.candidatos) : null,
+        ...datosMatching,
       },
     });
     procesadas++;
@@ -186,6 +251,93 @@ export async function importarEntradasPadronCsv({
   });
 
   return { procesadas, omitidas, filasOmitidas, totalFilas: filas.length };
+}
+
+interface ImportarEntradasPadronPdfInput {
+  padronId: string;
+  usuarioId: string;
+  nombreArchivo: string;
+  pdfBase64: string;
+}
+
+// Carga de un padrón directamente desde el PDF oficial —
+// /09-modulo-padron-electoral.md sección 4 y /15-ia.md sección 4: caso
+// principal de este módulo, dado que los padrones universitarios rara vez
+// llegan como planilla. Cada fila extraída con confianza de lectura baja
+// queda `pendiente` para revisión visual, nunca se incorpora silenciosamente
+// con un posible error de lectura (/15-ia.md sección 4.2).
+export async function importarEntradasPadronPdf({
+  padronId,
+  usuarioId,
+  nombreArchivo,
+  pdfBase64,
+}: ImportarEntradasPadronPdfInput) {
+  const pdfBuffer = Buffer.from(pdfBase64, "base64");
+
+  const rutaArchivo = `${usuarioId}/${Date.now()}-${nombreArchivo}`;
+  const admin = createAdminClient();
+  const { error: errorSubida } = await admin.storage
+    .from("importaciones")
+    .upload(rutaArchivo, pdfBuffer, { contentType: "application/pdf" });
+
+  const entradasExtraidas = await leerEntradasPadronPdf(pdfBuffer);
+
+  const umbral = await obtenerUmbralConfianzaDuplicados();
+  let procesadas = 0;
+  let omitidas = 0;
+  const filasOmitidas: { numeroFila: number; motivo: string }[] = [];
+
+  for (let i = 0; i < entradasExtraidas.length; i++) {
+    const entrada = entradasExtraidas[i];
+    const numeroFila = i + 1;
+
+    if (!entrada.dni || !entrada.nombreCompleto) {
+      omitidas++;
+      filasOmitidas.push({
+        numeroFila,
+        motivo: "La IA no pudo leer DNI o nombre en esta fila del documento.",
+      });
+      continue;
+    }
+
+    const datosMatching = await resolverDatosMatchingEntrada(
+      {
+        dni: entrada.dni,
+        nombreCompletoOriginal: entrada.nombreCompleto,
+        carreraTextoOriginal: entrada.carrera,
+        confianzaExtraccion: entrada.confianzaExtraccion,
+      },
+      umbral,
+    );
+
+    await prisma.padronEntrada.create({
+      data: {
+        padronElectoralId: padronId,
+        dni: entrada.dni,
+        nombreCompletoOriginal: entrada.nombreCompleto,
+        carreraTextoOriginal: entrada.carrera,
+        ...datosMatching,
+      },
+    });
+    procesadas++;
+  }
+
+  if (!errorSubida) {
+    await prisma.padronElectoral.update({
+      where: { id: padronId },
+      data: { archivoOrigenId: rutaArchivo },
+    });
+  }
+
+  await registrarCambio({
+    entidad: "PadronElectoral",
+    entidadId: padronId,
+    accion: "importar",
+    usuarioId,
+    metadata: { procesadas, omitidas, totalFilas: entradasExtraidas.length, origen: "pdf" },
+  });
+
+  return { procesadas, omitidas, filasOmitidas, totalFilas: entradasExtraidas.length };
 }
 
 export async function vincularEntradaManualmente(

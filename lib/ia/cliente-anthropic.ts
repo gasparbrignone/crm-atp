@@ -18,3 +18,10 @@ export function obtenerClienteAnthropic(): Anthropic {
 // Tareas de mayor complejidad (lectura de padrón en PDF, chatbot) pueden usar
 // un modelo distinto en su propio módulo de lib/ia/.
 export const MODELO_IA_LIVIANO = "claude-haiku-4-5-20251001";
+
+// Modelo para tareas de mayor complejidad que requieren lectura de
+// documentos/imágenes con más margen de razonamiento (lectura de padrones en
+// PDF, sección 4) — el volumen de páginas hace que el costo por página
+// importe, pero acá la precisión de lectura pesa más que el ahorro de
+// tokens, dado que alimenta directamente quién puede votar.
+export const MODELO_IA_DOCUMENTOS = "claude-sonnet-5";

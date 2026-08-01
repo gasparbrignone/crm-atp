@@ -2,7 +2,12 @@ import { notFound, redirect } from "next/navigation";
 import { requerirPermiso } from "@/lib/permisos/permisos";
 import { obtenerPadron } from "@/lib/servicios/padron.service";
 import { Card } from "@/components/ui/Card";
-import { ImportadorPadronCsv } from "./ImportadorPadronCsv";
+import { SelectorFuenteImportacion } from "./SelectorFuenteImportacion";
+
+// El procesamiento de PDF llama a la IA en lotes de páginas y puede tardar
+// varios minutos en documentos grandes (/15-ia.md sección 10) — ver nota en
+// PROMPT-CONTINUAR.md sobre el límite real dependiendo del plan de Vercel.
+export const maxDuration = 300;
 
 export default async function ImportarPadronPage({
   params,
@@ -21,12 +26,12 @@ export default async function ImportarPadronPage({
       <div>
         <h1 className="text-xl font-semibold text-texto">Importar entradas — {padron.nombre}</h1>
         <p className="text-sm text-texto-secundario">
-          Subí el archivo del padrón exportado a CSV. Cada fila se compara automáticamente contra
-          las Personas ya cargadas (DNI primero, después nombre).
+          Subí el padrón oficial (PDF, incluso escaneado) o un CSV/Excel exportado. Cada fila se
+          compara automáticamente contra las Personas ya cargadas (DNI primero, después nombre).
         </p>
       </div>
       <Card>
-        <ImportadorPadronCsv padronId={padron.id} />
+        <SelectorFuenteImportacion padronId={padron.id} />
       </Card>
     </div>
   );

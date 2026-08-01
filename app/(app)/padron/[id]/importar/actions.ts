@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requerirPermiso } from "@/lib/permisos/permisos";
-import { importarEntradasPadronCsv } from "@/lib/servicios/padron.service";
+import { importarEntradasPadronCsv, importarEntradasPadronPdf } from "@/lib/servicios/padron.service";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 
 export async function importarEntradasPadronCsvAction(
@@ -19,6 +19,26 @@ export async function importarEntradasPadronCsvAction(
     nombreArchivo,
     contenidoCsv,
     mapeo,
+  });
+
+  revalidatePath(`/padron/${padronId}`);
+  revalidatePath("/padron");
+
+  return resultado;
+}
+
+export async function importarEntradasPadronPdfAction(
+  padronId: string,
+  nombreArchivo: string,
+  pdfBase64: string,
+) {
+  const usuario = await requerirPermiso("padron.importar");
+
+  const resultado = await importarEntradasPadronPdf({
+    padronId,
+    usuarioId: usuario.id,
+    nombreArchivo,
+    pdfBase64,
   });
 
   revalidatePath(`/padron/${padronId}`);

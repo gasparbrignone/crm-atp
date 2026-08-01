@@ -90,10 +90,14 @@ export default async function PadronDetallePage({ params }: { params: Promise<{ 
           </h2>
           {pendientes.map((e) => {
             let candidatos: CandidatoGuardado[] = [];
-            const motivo = "Coincidencia probable, sin confirmar.";
+            let motivo = "Coincidencia probable, sin confirmar.";
             try {
-              const parseado = JSON.parse(e.candidatosSugeridos ?? "[]");
-              if (Array.isArray(parseado)) candidatos = parseado;
+              const parseado = JSON.parse(e.candidatosSugeridos ?? "{}") as {
+                motivo?: string;
+                candidatos?: CandidatoGuardado[];
+              };
+              if (Array.isArray(parseado.candidatos)) candidatos = parseado.candidatos;
+              if (parseado.motivo) motivo = parseado.motivo;
             } catch {
               candidatos = [];
             }

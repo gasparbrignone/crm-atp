@@ -55,6 +55,7 @@ export function ParticipacionesPanel({
   puedeGestionar,
   aceptaInscripciones,
   mostrarModoAsistencia,
+  puedeImportar,
 }: {
   actividadId: string;
   participaciones: Participante[];
@@ -62,6 +63,7 @@ export function ParticipacionesPanel({
   puedeGestionar: boolean;
   aceptaInscripciones: boolean;
   mostrarModoAsistencia: boolean;
+  puedeImportar: boolean;
 }) {
   const [q, setQ] = useState("");
   const [resultados, setResultados] = useState<ResultadoBusqueda[]>([]);
@@ -123,11 +125,18 @@ export function ParticipacionesPanel({
             </span>
           )}
         </p>
-        {mostrarModoAsistencia && (
-          <Link href={`/actividades/${actividadId}/asistencia`}>
-            <Button variant="secundario">Modo asistencia</Button>
-          </Link>
-        )}
+        <div className="flex gap-2">
+          {puedeImportar && aceptaInscripciones && (
+            <Link href={`/actividades/${actividadId}/importar`}>
+              <Button variant="secundario">Importar CSV</Button>
+            </Link>
+          )}
+          {mostrarModoAsistencia && (
+            <Link href={`/actividades/${actividadId}/asistencia`}>
+              <Button variant="secundario">Modo asistencia</Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       {puedeGestionar && aceptaInscripciones && (

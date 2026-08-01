@@ -248,6 +248,21 @@ async function main() {
     }
   }
 
+  // Umbral configurable de confianza para sugerencias de duplicados —
+  // /15-ia.md sección 2.3 y /18-configuracion-sistema.md. Ajustable después
+  // desde la UI de configuración (Fase 12) sin redeploy.
+  console.log("Sembrando configuración del sistema...");
+  await prisma.configuracionSistema.upsert({
+    where: { clave: "umbral_confianza_duplicados" },
+    update: {},
+    create: {
+      clave: "umbral_confianza_duplicados",
+      valor: "0.7",
+      descripcion:
+        "Puntaje mínimo (0 a 1) para que una coincidencia detectada por IA se sugiera automáticamente como posible duplicado.",
+    },
+  });
+
   console.log("Seed de Fase 0 completado.");
 }
 

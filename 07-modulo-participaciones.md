@@ -10,8 +10,9 @@
 4. [Registro de asistencia](#4-registro-de-asistencia)
 5. [Estados de una participación](#5-estados-de-una-participación)
 6. [Flujos de inscripción masiva](#6-flujos-de-inscripción-masiva)
-7. [Reglas de negocio del módulo](#7-reglas-de-negocio-del-módulo)
-8. [Permisos relevantes](#8-permisos-relevantes)
+7. [Inscripción masiva por importación (CSV/Sheets)](#7-inscripción-masiva-por-importación-csvsheets)
+8. [Reglas de negocio del módulo](#8-reglas-de-negocio-del-módulo)
+9. [Permisos relevantes](#9-permisos-relevantes)
 
 ---
 
@@ -69,18 +70,38 @@ El caso de uso más frecuente en el día del evento: marcar asistencia rápido, 
 
 Desde un listado de Personas filtrado (por ejemplo, "todas las de 2do año de Enfermería"), acción "Inscribir a actividad", selecciona la actividad destino y crea una `Participacion` por cada persona seleccionada que todavía no la tuviera, respetando la validación de cupo del conjunto completo antes de confirmar (si el cupo no alcanza para todos los seleccionados, se informa cuántos entrarían y se pide confirmación explícita en vez de fallar silenciosamente a mitad de camino).
 
-## 7. Reglas de negocio del módulo
+## 7. Inscripción masiva por importación (CSV/Sheets)
+
+> Decisión registrada con Gaspar (2026-08-01), no estaba resuelta en la v1 original de este documento. Complementa — no reemplaza — la sección 6: el flujo de la sección 6 parte de un listado de Personas ya cargadas en el sistema; esta sección cubre el caso real más frecuente en la operatoria de ATP, donde la inscripción a una actividad puntual se junta primero en un formulario/planilla externa (Google Sheets vinculado a la web de ATP, o un CSV puntual exportado de ahí) y **no** en el CRM directamente. El botón "Inscribir" individual (sección 3.1) sigue existiendo, pero queda como vía accesoria, no la principal, para este caso de uso.
+
+**Origen del dato real**: a diferencia del alta de Personas (que sí suele incluir DNI), el formulario de inscripción a una actividad típicamente solo junta **nombre, apellido y teléfono** (siempre presentes) y, a partir de ahora, **email**. El DNI y la carrera/año **no** suelen venir en el formulario, salvo en actividades puntuales que sí lo piden.
+
+**Mecanismo de matcheo contra Personas ya cargadas** (sin DNI en la mayoría de los casos, ver [`15-ia.md`](./15-ia.md#2-detección-inteligente-de-duplicados) para el detalle de señales y umbral de confianza):
+
+1. DNI idéntico, si vino en el archivo — determinístico, certeza total.
+2. Teléfono idéntico — señal fuerte elegida como segunda prioridad para este flujo específico (dato casi siempre presente y razonablemente único por persona).
+3. Si no hay coincidencia exacta de teléfono (o es ambigua entre más de una Persona), se compara nombre + apellido de forma asistida por IA contra un conjunto acotado de candidatos con apellido similar, cubriendo errores de tipeo y variantes de escritura.
+4. Si ninguna señal produce una coincidencia razonable, la fila **no crea una Persona nueva automáticamente**: queda registrada como pendiente de revisión manual (mismo mecanismo que `ImportJobError`), para que un usuario decida si es un alta nueva o un dato mal escrito de alguien ya cargado. Esta es una decisión deliberada de mitigar el riesgo de duplicados dado que, sin DNI, una creación automática tiene más chance real de generar una ficha repetida (contradice `RN-1`).
+
+**Carrera y año inferidos por actividad**: cuando una actividad es de una carrera/año conocidos de antemano (ej. "Repaso CyD" ⇒ Medicina, 1er año), el usuario que importa puede indicar opcionalmente una carrera y año "por defecto" para esa tanda de inscriptos. Se aplica **solo** a Personas nuevas o que todavía no tuvieran ese campo cargado — nunca sobreescribe un dato ya existente.
+
+**Re-importación de la misma actividad**: si se vuelve a subir un archivo actualizado de la misma actividad (por ejemplo, se sumó gente después de la primera carga), la importación **solo agrega inscripciones nuevas**. Nunca cancela automáticamente a alguien que estaba inscripto y ya no figura en el archivo nuevo — esa baja, si corresponde, queda a criterio manual.
+
+**Alcance actual**: implementado primero para CSV (reutiliza el mecanismo de `ImportJob`/`ImportJobError` de [`14-importaciones-exportaciones.md`](./14-importaciones-exportaciones.md)). La integración directa con Google Sheets (sección 4 de ese documento) queda pendiente para una iteración posterior — hoy el flujo real es exportar la planilla a CSV y subirla.
+
+## 8. Reglas de negocio del módulo
 
 - Ver `RN-4` en [`04-modelo-datos.md`](./04-modelo-datos.md#18-reglas-de-negocio-transversales) (unicidad del par persona/actividad).
 - Cambiar el estado de una `Participacion` genera entrada en `HistorialCambio`, igual que cualquier otro cambio relevante del sistema.
 - La eliminación de una `Participacion` **no existe** como operación disponible desde la UI estándar: el equivalente es pasarla a `cancelado`, preservando el registro.
 
-## 8. Permisos relevantes
+## 9. Permisos relevantes
 
 | Permiso | Habilita |
 |---|---|
 | `participaciones.gestionar` | Inscribir, cancelar, marcar asistencia |
 | `participaciones.gestionar_masivo` | Inscripción/cancelación masiva desde listados |
+| `importaciones.ejecutar` | Importar inscriptos por CSV a una actividad (sección 7) — mismo permiso genérico de [`14-importaciones-exportaciones.md`](./14-importaciones-exportaciones.md#10-permisos-relevantes), no se creó un permiso nuevo |
 
 ---
 

@@ -38,7 +38,7 @@ export default async function ActividadDetallePage({
   await requerirPermiso("actividades.ver");
   const { id } = await params;
 
-  const [actividad, tipos, responsables, actividadesPadre, usuario, puedeEditarBase, puedeGestionarTodas, puedeEliminar, puedeGestionarParticipaciones, historial] =
+  const [actividad, tipos, responsables, actividadesPadre, usuario, puedeEditarBase, puedeGestionarTodas, puedeEliminar, puedeGestionarParticipaciones, puedeImportar, historial] =
     await Promise.all([
       obtenerActividad(id),
       prisma.tipoActividad.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
@@ -54,6 +54,7 @@ export default async function ActividadDetallePage({
       tienePermiso("actividades.gestionar_todas"),
       tienePermiso("actividades.eliminar"),
       tienePermiso("participaciones.gestionar"),
+      tienePermiso("importaciones.ejecutar"),
       prisma.historialCambio.findMany({
         where: { entidad: "Actividad", entidadId: id },
         orderBy: { fecha: "desc" },
@@ -288,6 +289,7 @@ export default async function ActividadDetallePage({
                     puedeGestionarParticipaciones &&
                     (actividad.estado === "en_curso" || actividad.estado === "finalizada")
                   }
+                  puedeImportar={puedeImportar}
                 />
               ),
             },

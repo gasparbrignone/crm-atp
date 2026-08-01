@@ -1,6 +1,10 @@
+import Papa from "papaparse";
 import type { EstadoActividad, EstadoParticipacion } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { buscarPersonaCoincidente, obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
+import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
 
 export class ActividadNoAceptaInscripcionesError extends Error {
   constructor(public estado: EstadoActividad) {
@@ -263,4 +267,157 @@ export async function cambiarEstadoParticipacion(
 // equivalente es cancelarla (/07-modulo-participaciones.md sección 7).
 export async function cancelarParticipacion(participacionId: string, usuarioId: string) {
   return cambiarEstadoParticipacion(participacionId, "cancelado", usuarioId);
+}
+
+interface ImportarParticipacionesCsvInput {
+  actividadId: string;
+  usuarioId: string;
+  nombreArchivo: string;
+  contenidoCsv: string;
+  mapeo: Record<string, CampoInscripcionImportable | "">;
+  carreraDefaultId?: string;
+  anioDefault?: number;
+}
+
+// Importación de inscriptos por CSV — /07-modulo-participaciones.md sección
+// 7 (decisión registrada con Gaspar, no hay DNI en la mayoría de los
+// formularios de origen). Nunca crea una Persona nueva sola: sin una
+// coincidencia con confianza suficiente, la fila queda pendiente de revisión
+// manual (mismo mecanismo que ImportJobError del resto del sistema). Una
+// reimportación de la misma actividad solo agrega inscripciones nuevas,
+// nunca cancela a quien ya no figura en el archivo.
+export async function importarParticipacionesCsv({
+  actividadId,
+  usuarioId,
+  nombreArchivo,
+  contenidoCsv,
+  mapeo,
+  carreraDefaultId,
+  anioDefault,
+}: ImportarParticipacionesCsvInput) {
+  const actividad = await prisma.actividad.findUniqueOrThrow({ where: { id: actividadId } });
+  if (actividad.estado === "finalizada" || actividad.estado === "cancelada") {
+    throw new ActividadNoAceptaInscripcionesError(actividad.estado);
+  }
+
+  const { data: filas } = Papa.parse<Record<string, string>>(contenidoCsv, {
+    header: true,
+    skipEmptyLines: true,
+  });
+
+  const rutaArchivo = `${usuarioId}/${Date.now()}-${nombreArchivo}`;
+  const admin = createAdminClient();
+  const { error: errorSubida } = await admin.storage
+    .from("importaciones")
+    .upload(rutaArchivo, contenidoCsv, { contentType: "text/csv" });
+
+  const job = await prisma.importJob.create({
+    data: {
+      tipoOrigen: "csv",
+      entidadDestino: "Actividad",
+      estado: "procesando",
+      archivoOrigenId: errorSubida ? null : rutaArchivo,
+      totalFilas: filas.length,
+      usuarioId,
+    },
+  });
+
+  const umbral = await obtenerUmbralConfianzaDuplicados();
+  let exitosas = 0;
+  let conError = 0;
+
+  for (let i = 0; i < filas.length; i++) {
+    const fila = filas[i];
+    const numeroFila = i + 2;
+
+    const datos: Partial<Record<CampoInscripcionImportable, string>> = {};
+    for (const [columna, campo] of Object.entries(mapeo)) {
+      if (!campo) continue;
+      const valor = fila[columna];
+      if (valor) datos[campo] = valor.trim();
+    }
+
+    if (!datos.nombre || !datos.apellido) {
+      conError++;
+      await prisma.importJobError.create({
+        data: {
+          importJobId: job.id,
+          numeroFila,
+          contenidoOriginal: JSON.stringify(fila),
+          mensajeError: "Falta nombre o apellido en la fila.",
+        },
+      });
+      continue;
+    }
+
+    try {
+      const coincidencia = await buscarPersonaCoincidente({
+        nombre: datos.nombre,
+        apellido: datos.apellido,
+        telefono: datos.telefono,
+        email: datos.email,
+        dni: datos.dni,
+      });
+
+      if (!coincidencia || coincidencia.confianza < umbral) {
+        conError++;
+        await prisma.importJobError.create({
+          data: {
+            importJobId: job.id,
+            numeroFila,
+            contenidoOriginal: JSON.stringify(fila),
+            mensajeError: coincidencia
+              ? `Coincidencia de baja confianza (${Math.round(coincidencia.confianza * 100)}%, ${coincidencia.motivo}) — revisar manualmente.`
+              : "No se encontró ninguna Persona ya cargada que coincida — revisar manualmente (puede ser un alta nueva).",
+          },
+        });
+        continue;
+      }
+
+      if (carreraDefaultId || anioDefault) {
+        const persona = await prisma.persona.findUniqueOrThrow({
+          where: { id: coincidencia.personaId },
+        });
+        const datosActualizar: { carreraId?: string; anio?: number } = {};
+        if (carreraDefaultId && !persona.carreraId) datosActualizar.carreraId = carreraDefaultId;
+        if (anioDefault && !persona.anio) datosActualizar.anio = anioDefault;
+        if (Object.keys(datosActualizar).length > 0) {
+          await prisma.persona.update({ where: { id: persona.id }, data: datosActualizar });
+        }
+      }
+
+      await inscribirPersona(actividadId, coincidencia.personaId, usuarioId);
+      exitosas++;
+    } catch {
+      conError++;
+      await prisma.importJobError.create({
+        data: {
+          importJobId: job.id,
+          numeroFila,
+          contenidoOriginal: JSON.stringify(fila),
+          mensajeError: "No se pudo procesar la fila (error inesperado).",
+        },
+      });
+    }
+  }
+
+  const jobFinal = await prisma.importJob.update({
+    where: { id: job.id },
+    data: {
+      estado: conError > 0 ? "completado_con_errores" : "completado",
+      filasExitosas: exitosas,
+      filasConError: conError,
+      fechaFin: new Date(),
+    },
+  });
+
+  await registrarCambio({
+    entidad: "ImportJob",
+    entidadId: job.id,
+    accion: "importar",
+    usuarioId,
+    metadata: { entidadDestino: "Participacion", actividadId, exitosas, conError },
+  });
+
+  return jobFinal;
 }

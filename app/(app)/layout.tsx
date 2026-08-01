@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { MdSpaceDashboard, MdGroup, MdUploadFile, MdLogout, MdEvent } from "react-icons/md";
+import { MdSpaceDashboard, MdGroup, MdUploadFile, MdLogout, MdEvent, MdAdminPanelSettings } from "react-icons/md";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Sidebar, type EnlaceNav } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
@@ -33,6 +33,12 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     etiqueta: "Importar",
     icono: <MdUploadFile size={18} />,
     permiso: "importaciones.ejecutar",
+  },
+  {
+    href: "/usuarios",
+    etiqueta: "Usuarios",
+    icono: <MdAdminPanelSettings size={18} />,
+    permiso: "usuarios.ver",
   },
 ];
 

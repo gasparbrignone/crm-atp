@@ -5,9 +5,16 @@ import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-ant
 // confianza (sección 2.2): DNI/legajo idéntico (determinístico, no
 // probabilístico) > teléfono idéntico > nombre+apellido con alta similitud,
 // reforzado por IA quien decide fila por fila si es probable que sea la
-// misma persona. REGLA NO NEGOCIABLE (sección 2.3): esto nunca fusiona ni
-// crea nada solo — devuelve una sugerencia con puntaje de confianza para que
-// un humano decida.
+// misma persona. REGLA NO NEGOCIABLE (sección 2.3): esto nunca fusiona nada
+// solo. Sí puede dar de alta una Persona nueva cuando no hay absolutamente
+// ningún candidato parecido — decisión registrada con Gaspar en
+// /07-modulo-participaciones.md sección 7 (2026-08-01): cuando alguien se
+// inscribe a una actividad y no hay nadie remotamente similar ya cargado, es
+// casi seguro una persona genuinamente nueva, y forzar revisión manual en
+// ese caso solo agrega fricción sin reducir el riesgo real de duplicados.
+// El caso que sí amerita ojo humano es el candidato *parecido pero dudoso*
+// (nombre similar, no exacto): ahí es donde de verdad se puede duplicar a
+// alguien que ya está cargado.
 
 export interface DatosPersonaAComparar {
   nombre: string;
@@ -17,11 +24,17 @@ export interface DatosPersonaAComparar {
   dni?: string;
 }
 
-export interface ResultadoCoincidencia {
-  personaId: string;
-  confianza: number;
-  motivo: string;
+export interface CandidatoAmbiguo {
+  id: string;
+  nombre: string;
+  apellido: string;
+  telefono: string | null;
 }
+
+export type ResultadoBusquedaPersona =
+  | { tipo: "coincidencia"; personaId: string; confianza: number; motivo: string }
+  | { tipo: "sin_candidatos" }
+  | { tipo: "ambiguo"; motivo: string; candidatos: CandidatoAmbiguo[] };
 
 function normalizarTelefono(telefono: string): string {
   return telefono.replace(/\D/g, "").replace(/^0+/, "");
@@ -40,12 +53,14 @@ export async function obtenerUmbralConfianzaDuplicados(): Promise<number> {
 // no requieren juicio — o coinciden exacto, o no.
 async function buscarCoincidenciaDeterministica(
   datos: DatosPersonaAComparar,
-): Promise<ResultadoCoincidencia | null> {
+): Promise<ResultadoBusquedaPersona | null> {
   if (datos.dni) {
     const porDni = await prisma.persona.findFirst({
       where: { dni: datos.dni, estadoFicha: { not: "fusionada" } },
     });
-    if (porDni) return { personaId: porDni.id, confianza: 1, motivo: "DNI idéntico" };
+    if (porDni) {
+      return { tipo: "coincidencia", personaId: porDni.id, confianza: 1, motivo: "DNI idéntico" };
+    }
   }
 
   if (datos.telefono) {
@@ -62,6 +77,7 @@ async function buscarCoincidenciaDeterministica(
       );
       if (personaIdsCoincidentes.size === 1) {
         return {
+          tipo: "coincidencia",
           personaId: [...personaIdsCoincidentes][0],
           confianza: 0.9,
           motivo: "Teléfono idéntico",
@@ -117,14 +133,16 @@ function extraerJson(texto: string): unknown {
 
 // Paso 2 (asistido por IA): sin DNI ni teléfono exacto disponible, se le pide
 // al modelo que compare la fila contra un conjunto acotado de candidatos por
-// apellido similar y decida si alguno es, con razonable certeza, la misma
-// persona — nunca se le manda la base completa de Personas (minimización de
-// datos, /16-seguridad.md).
+// apellido similar — nunca se le manda la base completa de Personas
+// (minimización de datos, /16-seguridad.md). Si no hay ningún candidato ni
+// remotamente parecido, es alta nueva segura; si hay alguno pero la IA no
+// tiene confianza suficiente, es un caso ambiguo para revisión humana.
 async function buscarCoincidenciaAsistidaPorIa(
   datos: DatosPersonaAComparar,
-): Promise<ResultadoCoincidencia | null> {
+  umbral: number,
+): Promise<ResultadoBusquedaPersona> {
   const candidatos = await obtenerCandidatosPorApellido(datos.apellido);
-  if (candidatos.length === 0) return null;
+  if (candidatos.length === 0) return { tipo: "sin_candidatos" };
 
   const prompt = `Tarea: decidir si una fila de un formulario de inscripción corresponde a alguna persona ya cargada en el sistema.
 
@@ -146,16 +164,53 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     messages: [{ role: "user", content: prompt }],
   });
 
+  const candidatosParaMostrar: CandidatoAmbiguo[] = candidatos.map((c) => ({
+    id: c.id,
+    nombre: c.nombre,
+    apellido: c.apellido,
+    telefono: c.telefonos[0] ?? null,
+  }));
+
   const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") return null;
+  if (!bloqueTexto || bloqueTexto.type !== "text") {
+    return {
+      tipo: "ambiguo",
+      motivo: "No se pudo interpretar la respuesta de la IA.",
+      candidatos: candidatosParaMostrar,
+    };
+  }
 
   const json = extraerJson(bloqueTexto.text) as
     | { personaId: string | null; confianza: number; motivo: string }
     | null;
-  if (!json || !json.personaId || typeof json.confianza !== "number") return null;
-  if (!candidatos.some((c) => c.id === json.personaId)) return null;
 
-  return { personaId: json.personaId, confianza: json.confianza, motivo: json.motivo };
+  if (!json || typeof json.confianza !== "number") {
+    return {
+      tipo: "ambiguo",
+      motivo: "No se pudo interpretar la respuesta de la IA.",
+      candidatos: candidatosParaMostrar,
+    };
+  }
+  if (!json.personaId || !candidatos.some((c) => c.id === json.personaId)) {
+    // La IA vio candidatos con apellido parecido pero no encontró ninguno
+    // razonable — hay al menos una persona similar cargada, así que se
+    // prefiere revisión humana antes que un alta automática que podría
+    // duplicarla.
+    return {
+      tipo: "ambiguo",
+      motivo: json.motivo ?? "Ningún candidato parecido es razonablemente la misma persona.",
+      candidatos: candidatosParaMostrar,
+    };
+  }
+  if (json.confianza < umbral) {
+    return {
+      tipo: "ambiguo",
+      motivo: `Coincidencia de baja confianza (${Math.round(json.confianza * 100)}%): ${json.motivo}`,
+      candidatos: candidatosParaMostrar,
+    };
+  }
+
+  return { tipo: "coincidencia", personaId: json.personaId, confianza: json.confianza, motivo: json.motivo };
 }
 
 // Punto de entrada del módulo: intenta primero las señales determinísticas
@@ -164,9 +219,10 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 // (/15-ia.md sección 10).
 export async function buscarPersonaCoincidente(
   datos: DatosPersonaAComparar,
-): Promise<ResultadoCoincidencia | null> {
+  umbral: number,
+): Promise<ResultadoBusquedaPersona> {
   const coincidenciaDeterministica = await buscarCoincidenciaDeterministica(datos);
   if (coincidenciaDeterministica) return coincidenciaDeterministica;
 
-  return buscarCoincidenciaAsistidaPorIa(datos);
+  return buscarCoincidenciaAsistidaPorIa(datos, umbral);
 }

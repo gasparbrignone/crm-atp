@@ -227,6 +227,9 @@ export function ImportadorInscriptosCsv({
           Importación {resultado.estado === "completado" ? "completada" : "completada con errores"}
           : <strong className="text-exito">{resultado.exitosas} inscriptas</strong> de{" "}
           {resultado.totalFilas} filas
+          {resultado.altasNuevas > 0 && (
+            <> ({resultado.altasNuevas} como personas nuevas, ya aparecen en el listado de Personas)</>
+          )}
           {resultado.conError > 0 && (
             <>
               , <strong className="text-error">{resultado.conError} pendientes de revisión</strong>
@@ -236,26 +239,40 @@ export function ImportadorInscriptosCsv({
         </p>
 
         {resultado.errores.length > 0 && (
-          <div>
-            <p className="mb-2 text-sm font-semibold text-texto">
-              Filas pendientes de revisión manual
-            </p>
-            <Table>
-              <TableHead>
-                <tr>
-                  <TableHeaderCell>Fila</TableHeaderCell>
-                  <TableHeaderCell>Motivo</TableHeaderCell>
-                </tr>
-              </TableHead>
-              <TableBody>
-                {resultado.errores.map((e, i) => (
-                  <TableRow key={i}>
-                    <TableCell>{e.numeroFila}</TableCell>
-                    <TableCell>{e.mensajeError}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-semibold text-texto">Filas pendientes de revisión manual</p>
+            {resultado.errores.map((e, i) => (
+              <div key={i} className="rounded-borde border border-borde p-3">
+                <p className="text-sm text-texto">
+                  <span className="font-medium">Fila {e.numeroFila}:</span> {e.motivo}
+                </p>
+                {e.candidatos.length > 0 && (
+                  <div className="mt-2">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-texto-secundario">
+                      ¿Es alguna de estas personas?
+                    </p>
+                    <ul className="flex flex-col gap-1">
+                      {e.candidatos.map((c) => (
+                        <li key={c.id}>
+                          <Link
+                            href={`/personas/${c.id}`}
+                            target="_blank"
+                            className="text-sm text-secundario hover:underline"
+                          >
+                            {c.apellido}, {c.nombre}
+                            {c.telefono ? ` · ${c.telefono}` : ""} →
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs text-texto-secundario">
+                      Si es una de estas, inscribila desde la ficha de la actividad (buscador de
+                      &ldquo;Agregar persona&rdquo;). Si es alguien nuevo, dala de alta desde Personas.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

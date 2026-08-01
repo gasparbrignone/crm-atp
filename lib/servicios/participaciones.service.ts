@@ -325,6 +325,7 @@ export async function importarParticipacionesCsv({
   const umbral = await obtenerUmbralConfianzaDuplicados();
   let exitosas = 0;
   let conError = 0;
+  let altasNuevas = 0;
 
   for (let i = 0; i < filas.length; i++) {
     const fila = filas[i];
@@ -351,42 +352,73 @@ export async function importarParticipacionesCsv({
     }
 
     try {
-      const coincidencia = await buscarPersonaCoincidente({
-        nombre: datos.nombre,
-        apellido: datos.apellido,
-        telefono: datos.telefono,
-        email: datos.email,
-        dni: datos.dni,
-      });
+      const resultado = await buscarPersonaCoincidente(
+        {
+          nombre: datos.nombre,
+          apellido: datos.apellido,
+          telefono: datos.telefono,
+          email: datos.email,
+          dni: datos.dni,
+        },
+        umbral,
+      );
 
-      if (!coincidencia || coincidencia.confianza < umbral) {
+      if (resultado.tipo === "ambiguo") {
         conError++;
         await prisma.importJobError.create({
           data: {
             importJobId: job.id,
             numeroFila,
             contenidoOriginal: JSON.stringify(fila),
-            mensajeError: coincidencia
-              ? `Coincidencia de baja confianza (${Math.round(coincidencia.confianza * 100)}%, ${coincidencia.motivo}) — revisar manualmente.`
-              : "No se encontró ninguna Persona ya cargada que coincida — revisar manualmente (puede ser un alta nueva).",
+            mensajeError: JSON.stringify({ motivo: resultado.motivo, candidatos: resultado.candidatos }),
           },
         });
         continue;
       }
 
-      if (carreraDefaultId || anioDefault) {
-        const persona = await prisma.persona.findUniqueOrThrow({
-          where: { id: coincidencia.personaId },
+      let personaId: string;
+
+      if (resultado.tipo === "sin_candidatos") {
+        // Nadie remotamente parecido ya cargado — alta nueva segura, ver
+        // /07-modulo-participaciones.md sección 7.
+        const nueva = await prisma.persona.create({
+          data: {
+            nombre: datos.nombre,
+            apellido: datos.apellido,
+            dni: datos.dni ?? null,
+            carreraId: carreraDefaultId ?? null,
+            anio: anioDefault ?? null,
+            creadoPorId: usuarioId,
+            modificadoPorId: usuarioId,
+            telefonos: datos.telefono
+              ? { create: [{ numero: datos.telefono, esPrincipal: true }] }
+              : undefined,
+            emails: datos.email ? { create: [{ email: datos.email, esPrincipal: true }] } : undefined,
+          },
         });
-        const datosActualizar: { carreraId?: string; anio?: number } = {};
-        if (carreraDefaultId && !persona.carreraId) datosActualizar.carreraId = carreraDefaultId;
-        if (anioDefault && !persona.anio) datosActualizar.anio = anioDefault;
-        if (Object.keys(datosActualizar).length > 0) {
-          await prisma.persona.update({ where: { id: persona.id }, data: datosActualizar });
+        await registrarCambio({
+          entidad: "Persona",
+          entidadId: nueva.id,
+          accion: "crear",
+          usuarioId,
+          metadata: { origen: "importacion_inscriptos", actividadId },
+        });
+        personaId = nueva.id;
+        altasNuevas++;
+      } else {
+        personaId = resultado.personaId;
+        if (carreraDefaultId || anioDefault) {
+          const persona = await prisma.persona.findUniqueOrThrow({ where: { id: personaId } });
+          const datosActualizar: { carreraId?: string; anio?: number } = {};
+          if (carreraDefaultId && !persona.carreraId) datosActualizar.carreraId = carreraDefaultId;
+          if (anioDefault && !persona.anio) datosActualizar.anio = anioDefault;
+          if (Object.keys(datosActualizar).length > 0) {
+            await prisma.persona.update({ where: { id: persona.id }, data: datosActualizar });
+          }
         }
       }
 
-      await inscribirPersona(actividadId, coincidencia.personaId, usuarioId);
+      await inscribirPersona(actividadId, personaId, usuarioId);
       exitosas++;
     } catch {
       conError++;
@@ -416,8 +448,8 @@ export async function importarParticipacionesCsv({
     entidadId: job.id,
     accion: "importar",
     usuarioId,
-    metadata: { entidadDestino: "Participacion", actividadId, exitosas, conError },
+    metadata: { entidadDestino: "Participacion", actividadId, exitosas, conError, altasNuevas },
   });
 
-  return jobFinal;
+  return { ...jobFinal, altasNuevas };
 }

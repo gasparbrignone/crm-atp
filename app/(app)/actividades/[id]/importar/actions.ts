@@ -5,14 +5,22 @@ import { requerirPermiso } from "@/lib/permisos/permisos";
 import { importarParticipacionesCsv } from "@/lib/servicios/participaciones.service";
 import { prisma } from "@/lib/prisma/client";
 import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
+import type { CandidatoAmbiguo } from "@/lib/ia/deteccion-duplicados";
+
+export interface FilaPendienteRevision {
+  numeroFila: number;
+  motivo: string;
+  candidatos: CandidatoAmbiguo[];
+}
 
 export interface ResultadoImportacionInscriptos {
   jobId: string;
   totalFilas: number;
   exitosas: number;
+  altasNuevas: number;
   conError: number;
   estado: string;
-  errores: { numeroFila: number; mensajeError: string }[];
+  errores: FilaPendienteRevision[];
 }
 
 export async function importarInscriptosCsvAction(
@@ -36,18 +44,29 @@ export async function importarInscriptosCsvAction(
   });
 
   revalidatePath(`/actividades/${actividadId}`);
+  revalidatePath("/personas");
 
-  const errores = await prisma.importJobError.findMany({
+  const erroresCrudos = await prisma.importJobError.findMany({
     where: { importJobId: job.id },
     orderBy: { numeroFila: "asc" },
     take: 100,
     select: { numeroFila: true, mensajeError: true },
   });
 
+  const errores: FilaPendienteRevision[] = erroresCrudos.map((e) => {
+    try {
+      const parseado = JSON.parse(e.mensajeError) as { motivo: string; candidatos: CandidatoAmbiguo[] };
+      return { numeroFila: e.numeroFila, motivo: parseado.motivo, candidatos: parseado.candidatos ?? [] };
+    } catch {
+      return { numeroFila: e.numeroFila, motivo: e.mensajeError, candidatos: [] };
+    }
+  });
+
   return {
     jobId: job.id,
     totalFilas: job.totalFilas ?? 0,
     exitosas: job.filasExitosas,
+    altasNuevas: job.altasNuevas,
     conError: job.filasConError,
     estado: job.estado,
     errores,

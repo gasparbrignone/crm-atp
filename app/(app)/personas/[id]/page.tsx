@@ -3,12 +3,17 @@ import Link from "next/link";
 import { MdArrowBack } from "react-icons/md";
 import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { obtenerPersona } from "@/lib/servicios/personas.service";
+import { listarParticipacionesDePersona } from "@/lib/servicios/participaciones.service";
 import { prisma } from "@/lib/prisma/client";
 import { CampoEditable } from "@/components/personas/CampoEditable";
 import { PersonaTabs } from "@/components/personas/PersonaTabs";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
+import {
+  ETIQUETA_ESTADO_PARTICIPACION,
+  COLOR_ESTADO_PARTICIPACION,
+} from "@/lib/utils/actividad-labels";
 import { actualizarCampoPersonaAction, archivarPersonaAction, restaurarPersonaAction } from "../actions";
 
 export default async function PersonaDetallePage({
@@ -19,11 +24,12 @@ export default async function PersonaDetallePage({
   await requerirPermiso("personas.ver");
   const { id } = await params;
 
-  const [persona, carreras, puedeEditar, puedeArchivar] = await Promise.all([
+  const [persona, carreras, puedeEditar, puedeArchivar, participaciones] = await Promise.all([
     obtenerPersona(id),
     prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
     tienePermiso("personas.editar"),
     tienePermiso("personas.archivar"),
+    listarParticipacionesDePersona(id),
   ]);
 
   if (!persona) notFound();
@@ -187,9 +193,33 @@ export default async function PersonaDetallePage({
             id: "actividades",
             etiqueta: "Actividades",
             contenido: (
-              <p className="text-sm text-texto-secundario">
-                Disponible desde la Fase 2 (ver /20-roadmap.md).
-              </p>
+              <div className="flex flex-col divide-y divide-borde">
+                {participaciones.length === 0 && (
+                  <p className="text-sm text-texto-secundario">
+                    Todavía no participó de ninguna actividad.
+                  </p>
+                )}
+                {participaciones.map((p) => (
+                  <Link
+                    key={p.id}
+                    href={`/actividades/${p.actividadId}`}
+                    className="flex items-center justify-between gap-3 py-2.5 hover:text-secundario"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-texto">{p.actividad.nombre}</p>
+                      <p className="text-xs text-texto-secundario">
+                        {p.actividad.tipoActividad.nombre} ·{" "}
+                        {new Date(p.actividad.fechaInicio).toLocaleDateString("es-AR")}
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PARTICIPACION[p.estado]}`}
+                    >
+                      {ETIQUETA_ESTADO_PARTICIPACION[p.estado]}
+                    </span>
+                  </Link>
+                ))}
+              </div>
             ),
           },
           {

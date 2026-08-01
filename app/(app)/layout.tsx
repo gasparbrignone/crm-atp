@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { MdSpaceDashboard, MdGroup, MdUploadFile, MdLogout } from "react-icons/md";
+import { MdSpaceDashboard, MdGroup, MdUploadFile, MdLogout, MdEvent } from "react-icons/md";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma/client";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -23,6 +23,12 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     etiqueta: "Personas",
     icono: <MdGroup size={18} />,
     permiso: "personas.ver",
+  },
+  {
+    href: "/actividades",
+    etiqueta: "Actividades",
+    icono: <MdEvent size={18} />,
+    permiso: "actividades.ver",
   },
   {
     href: "/importar",

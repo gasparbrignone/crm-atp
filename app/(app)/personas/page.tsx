@@ -1,22 +1,14 @@
 import Link from "next/link";
 import { MdAdd, MdSearch } from "react-icons/md";
-import { requerirPermiso } from "@/lib/permisos/permisos";
+import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { listarPersonas } from "@/lib/servicios/personas.service";
 import { prisma } from "@/lib/prisma/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
-import {
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableHeaderCell,
-  TableCell,
-  TableEmptyState,
-} from "@/components/ui/Table";
-import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
+import { TablaPersonasSeleccionable } from "@/components/personas/TablaPersonasSeleccionable";
+import { ETIQUETA_ESTADO_PADRON } from "@/lib/utils/persona-labels";
 
 // Listado paginado de Personas — ver /05-modulo-personas.md sección 6.
 export default async function PersonasPage({
@@ -37,10 +29,20 @@ export default async function PersonasPage({
     porPagina: sp.porPagina ? Number(sp.porPagina) : 50,
   };
 
-  const [{ personas, total, pagina, porPagina }, carreras] = await Promise.all([
+  const [{ personas, total, pagina, porPagina }, carreras, puedeInscribirMasivo] = await Promise.all([
     listarPersonas(filtros),
     prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+    tienePermiso("participaciones.gestionar_masivo"),
   ]);
+
+  const actividadesDisponibles = puedeInscribirMasivo
+    ? await prisma.actividad.findMany({
+        where: { estado: { in: ["planificada", "en_curso"] } },
+        orderBy: { fechaInicio: "asc" },
+        select: { id: true, nombre: true, cupoMaximo: true },
+        take: 200,
+      })
+    : [];
 
   const totalPaginas = Math.max(1, Math.ceil(total / porPagina));
 
@@ -114,53 +116,11 @@ export default async function PersonasPage({
         </form>
       </Card>
 
-      <Table>
-        <TableHead>
-          <tr>
-            <TableHeaderCell>Nombre</TableHeaderCell>
-            <TableHeaderCell>DNI</TableHeaderCell>
-            <TableHeaderCell>Carrera</TableHeaderCell>
-            <TableHeaderCell>Año</TableHeaderCell>
-            <TableHeaderCell>Estado de padrón</TableHeaderCell>
-          </tr>
-        </TableHead>
-        <TableBody>
-          {personas.length === 0 && (
-            <TableEmptyState>
-              Todavía no cargaste ninguna Persona —{" "}
-              <Link href="/personas/nueva" className="text-secundario hover:underline">
-                dar de alta la primera
-              </Link>
-              .
-            </TableEmptyState>
-          )}
-          {personas.map((persona) => (
-            <TableRow key={persona.id}>
-              <TableCell>
-                <Link href={`/personas/${persona.id}`} className="group flex items-center gap-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secundario/10 text-xs font-semibold text-secundario">
-                    {persona.nombre[0]}
-                    {persona.apellido[0]}
-                  </span>
-                  <span className="font-medium text-texto group-hover:text-secundario">
-                    {persona.apellido}, {persona.nombre}
-                  </span>
-                </Link>
-              </TableCell>
-              <TableCell>{persona.dni ?? "—"}</TableCell>
-              <TableCell>{persona.carrera?.nombre ?? "—"}</TableCell>
-              <TableCell>{persona.anio ?? "—"}</TableCell>
-              <TableCell>
-                <span
-                  className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadron]}`}
-                >
-                  {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
-                </span>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <TablaPersonasSeleccionable
+        personas={personas}
+        seleccionable={puedeInscribirMasivo}
+        actividadesDisponibles={actividadesDisponibles}
+      />
 
       {total > 0 && (
         <div className="flex items-center justify-between text-sm text-texto-secundario">

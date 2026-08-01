@@ -38,16 +38,11 @@ const actividadBaseSchema = z.object({
 });
 
 // Validación completa — usada en el alta. La edición inline valida campo a
-// campo con actividadCampoSchema y deja las reglas cruzadas (lugar condicional,
-// fechaFin >= fechaInicio) a cargo del servicio cuando aplica a un único campo.
+// campo con actividadCampoSchema y deja la regla cruzada (fechaFin >=
+// fechaInicio) a cargo del servicio cuando aplica a un único campo. `lugar`
+// es opcional sin condición, según /04-modelo-datos.md sección 6.1 (confirmado
+// explícitamente por Gaspar).
 export const actividadFormSchema = actividadBaseSchema.superRefine((data, ctx) => {
-  if (data.modalidad !== "virtual" && !data.lugar) {
-    ctx.addIssue({
-      code: "custom",
-      message: "El lugar es obligatorio salvo modalidad virtual.",
-      path: ["lugar"],
-    });
-  }
   if (data.fechaFin && new Date(data.fechaFin) < new Date(data.fechaInicio)) {
     ctx.addIssue({
       code: "custom",

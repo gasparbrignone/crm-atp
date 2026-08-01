@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -19,7 +19,7 @@ interface FormularioActividadProps {
 
 // Alta de actividad — /06-modulo-actividades.md sección 4.1 (campos del
 // formulario). Nombre, tipo, fecha de inicio, modalidad y responsable son
-// obligatorios; lugar es condicional a la modalidad.
+// obligatorios; el resto (incluido lugar) es opcional, según /04-modelo-datos.md.
 export function FormularioActividad({
   tipos,
   responsables,
@@ -27,7 +27,6 @@ export function FormularioActividad({
   responsableIdDefault,
 }: FormularioActividadProps) {
   const [estado, formAction, enviando] = useActionState(crearActividadAction, estadoInicial);
-  const [modalidad, setModalidad] = useState<"presencial" | "virtual" | "hibrida">("presencial");
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
@@ -69,24 +68,13 @@ export function FormularioActividad({
         />
       </div>
 
-      <Select
-        label="Modalidad"
-        name="modalidad"
-        defaultValue="presencial"
-        onChange={(e) => setModalidad(e.target.value as typeof modalidad)}
-      >
+      <Select label="Modalidad" name="modalidad" defaultValue="presencial">
         <option value="presencial">Presencial</option>
         <option value="virtual">Virtual</option>
         <option value="hibrida">Híbrida</option>
       </Select>
 
-      <Input
-        label="Lugar"
-        name="lugar"
-        required={modalidad !== "virtual"}
-        ayuda={modalidad === "virtual" ? "Opcional en modalidad virtual" : undefined}
-        error={estado.erroresCampo?.lugar}
-      />
+      <Input label="Lugar" name="lugar" error={estado.erroresCampo?.lugar} />
 
       <Input
         label="Cupo máximo"

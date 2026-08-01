@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
@@ -17,6 +17,18 @@ export const metadata: Metadata = {
   title: "CRM ATP",
   description:
     "CRM inteligente de ATP — Agrupación estudiantil, Facultad de Ciencias Médicas (UNR)",
+};
+
+// OJO: definir `viewport` acá REEMPLAZA por completo los valores por defecto
+// de Next.js (incluido width/initialScale) — hay que repetirlos a mano, si no
+// el mobile pierde el escalado correcto y todo se ve "cortado"/de tamaño
+// incorrecto. colorScheme refuerza el `color-scheme` de globals.css para que
+// el navegador no aplique su propio oscurecimiento heurístico sobre
+// elementos sueltos de la página.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  colorScheme: "light dark",
 };
 
 // Aplica el tema guardado por el usuario antes del primer render, para evitar

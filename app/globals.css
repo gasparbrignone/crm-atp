@@ -11,6 +11,14 @@
  * el contraste mínimo 4.5:1 exigido en la sección 9 (accesibilidad).
  */
 :root {
+  /* Le dice al navegador que esta página ya maneja su propio claro/oscuro
+   * (ver los tokens de abajo), para que Chrome/Brave no intenten aplicar su
+   * propio "forzar oscuro" heurístico sobre elementos individuales — eso
+   * puede producir bloques con un tono ligeramente distinto al resto
+   * (recuadros "flotantes" con su propio fondo) en vez de un oscuro
+   * consistente en toda la página. */
+  color-scheme: light dark;
+
   --color-primario: #f969d7;
   --color-primario-fuerte: #e34cc0;
   --color-secundario: #2e5699;

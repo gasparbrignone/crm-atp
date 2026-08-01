@@ -4,57 +4,77 @@
  * Design tokens — ver /19-ux-ui.md sección 2 y 3.
  * Los 5 colores de identidad ATP se usan exclusivamente como colores
  * semánticos de estado (nunca como paleta decorativa múltiple en pantalla).
+ * Fondo de página vs. superficie de tarjeta separados (como Airtable/Notion):
+ * el fondo es gris muy suave, las tarjetas son blancas con sombra — así se
+ * genera profundidad sin depender solo de bordes.
  * Modo oscuro: mismos tonos de marca ajustados en luminosidad para mantener
  * el contraste mínimo 4.5:1 exigido en la sección 9 (accesibilidad).
  */
 :root {
   --color-primario: #f969d7;
+  --color-primario-fuerte: #e34cc0;
   --color-secundario: #2e5699;
   --color-exito: #29a843;
   --color-alerta: #f9c900;
   --color-error: #e8231a;
 
-  --color-fondo: #ffffff;
+  --color-fondo: #f6f6fb;
   --color-fondo-superficie: #ffffff;
-  --color-texto: #171717;
-  --color-texto-secundario: #52525b;
-  --color-borde: #e4e4e7;
+  --color-fondo-hover: #f0f0f7;
+  --color-texto: #1c1c22;
+  --color-texto-secundario: #6b6b7a;
+  --color-borde: #e6e6ef;
 
-  --radio-borde: 5px;
+  --radio-borde: 10px;
+  --radio-borde-chico: 6px;
+
+  --sombra-tarjeta: 0 1px 2px rgba(28, 28, 34, 0.04), 0 2px 8px rgba(28, 28, 34, 0.06);
+  --sombra-flotante: 0 4px 12px rgba(28, 28, 34, 0.08), 0 12px 32px rgba(28, 28, 34, 0.12);
 }
 
 :root[data-theme="dark"] {
   --color-primario: #ff8fe1;
-  --color-secundario: #6d93d6;
+  --color-primario-fuerte: #ffa7e9;
+  --color-secundario: #7fa3e8;
   --color-exito: #4fc767;
   --color-alerta: #ffd83d;
-  --color-error: #ff5c52;
+  --color-error: #ff6b62;
 
-  --color-fondo: #0a0a0a;
-  --color-fondo-superficie: #18181b;
-  --color-texto: #f4f4f5;
-  --color-texto-secundario: #a1a1aa;
-  --color-borde: #2e2e33;
+  --color-fondo: #101014;
+  --color-fondo-superficie: #191a20;
+  --color-fondo-hover: #212228;
+  --color-texto: #f2f2f5;
+  --color-texto-secundario: #a3a3b2;
+  --color-borde: #2a2b33;
+
+  --sombra-tarjeta: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --sombra-flotante: 0 4px 16px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --color-primario: #ff8fe1;
-    --color-secundario: #6d93d6;
+    --color-primario-fuerte: #ffa7e9;
+    --color-secundario: #7fa3e8;
     --color-exito: #4fc767;
     --color-alerta: #ffd83d;
-    --color-error: #ff5c52;
+    --color-error: #ff6b62;
 
-    --color-fondo: #0a0a0a;
-    --color-fondo-superficie: #18181b;
-    --color-texto: #f4f4f5;
-    --color-texto-secundario: #a1a1aa;
-    --color-borde: #2e2e33;
+    --color-fondo: #101014;
+    --color-fondo-superficie: #191a20;
+    --color-fondo-hover: #212228;
+    --color-texto: #f2f2f5;
+    --color-texto-secundario: #a3a3b2;
+    --color-borde: #2a2b33;
+
+    --sombra-tarjeta: 0 1px 2px rgba(0, 0, 0, 0.3), 0 2px 8px rgba(0, 0, 0, 0.35);
+    --sombra-flotante: 0 4px 16px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
   }
 }
 
 @theme inline {
   --color-primario: var(--color-primario);
+  --color-primario-fuerte: var(--color-primario-fuerte);
   --color-secundario: var(--color-secundario);
   --color-exito: var(--color-exito);
   --color-alerta: var(--color-alerta);
@@ -62,17 +82,28 @@
 
   --color-fondo: var(--color-fondo);
   --color-fondo-superficie: var(--color-fondo-superficie);
+  --color-fondo-hover: var(--color-fondo-hover);
   --color-texto: var(--color-texto);
   --color-texto-secundario: var(--color-texto-secundario);
   --color-borde: var(--color-borde);
 
   --radius-borde: var(--radio-borde);
+  --radius-borde-chico: var(--radio-borde-chico);
 
-  --font-sans: var(--font-montserrat);
+  --shadow-tarjeta: var(--sombra-tarjeta);
+  --shadow-flotante: var(--sombra-flotante);
+
+  --font-sans: var(--font-inter);
 }
 
 body {
   background: var(--color-fondo);
   color: var(--color-texto);
   font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+/* Scrollbar sutil, consistente con el resto del sistema visual */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-borde) transparent;
 }

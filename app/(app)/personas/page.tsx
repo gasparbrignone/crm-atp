@@ -1,10 +1,12 @@
 import Link from "next/link";
+import { MdAdd, MdSearch } from "react-icons/md";
 import { requerirPermiso } from "@/lib/permisos/permisos";
 import { listarPersonas } from "@/lib/servicios/personas.service";
 import { prisma } from "@/lib/prisma/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { Card } from "@/components/ui/Card";
 import {
   Table,
   TableHead,
@@ -52,48 +54,65 @@ export default async function PersonasPage({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-lg font-semibold text-texto">Personas</h1>
+    <div className="mx-auto flex max-w-6xl flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-texto">Personas</h1>
+          <p className="text-sm text-texto-secundario">
+            {total} persona{total === 1 ? "" : "s"} en la base
+          </p>
+        </div>
         <Link href="/personas/nueva">
-          <Button>+ Nueva persona</Button>
+          <Button>
+            <MdAdd size={18} />
+            Nueva persona
+          </Button>
         </Link>
       </div>
 
-      <form className="flex flex-wrap gap-3" action="/personas">
-        <Input name="q" placeholder="Nombre, apellido, DNI o legajo" defaultValue={sp.q} />
-        <Select name="carreraId" defaultValue={sp.carreraId ?? ""}>
-          <option value="">Todas las carreras</option>
-          {carreras.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.nombre}
-            </option>
-          ))}
-        </Select>
-        <Select name="anio" defaultValue={sp.anio ?? ""}>
-          <option value="">Todos los años</option>
-          {[1, 2, 3, 4, 5, 6].map((a) => (
-            <option key={a} value={a}>
-              Año {a}
-            </option>
-          ))}
-        </Select>
-        <Select name="estadoPadron" defaultValue={sp.estadoPadron ?? ""}>
-          <option value="">Todo estado de padrón</option>
-          {Object.entries(ETIQUETA_ESTADO_PADRON).map(([valor, etiqueta]) => (
-            <option key={valor} value={valor}>
-              {etiqueta}
-            </option>
-          ))}
-        </Select>
-        <Select name="estadoFicha" defaultValue={sp.estadoFicha ?? "activa"}>
-          <option value="activa">Activas</option>
-          <option value="archivada">Archivadas</option>
-        </Select>
-        <Button type="submit" variant="secundario">
-          Filtrar
-        </Button>
-      </form>
+      <Card padding="chico">
+        <form className="flex flex-wrap items-end gap-3" action="/personas">
+          <div className="min-w-[220px] flex-1">
+            <Input
+              name="q"
+              placeholder="Buscar por nombre, apellido, DNI o legajo"
+              defaultValue={sp.q}
+            />
+          </div>
+          <Select name="carreraId" defaultValue={sp.carreraId ?? ""} className="w-auto">
+            <option value="">Todas las carreras</option>
+            {carreras.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
+              </option>
+            ))}
+          </Select>
+          <Select name="anio" defaultValue={sp.anio ?? ""} className="w-auto">
+            <option value="">Todos los años</option>
+            {[1, 2, 3, 4, 5, 6].map((a) => (
+              <option key={a} value={a}>
+                Año {a}
+              </option>
+            ))}
+          </Select>
+          <Select name="estadoPadron" defaultValue={sp.estadoPadron ?? ""} className="w-auto">
+            <option value="">Todo estado de padrón</option>
+            {Object.entries(ETIQUETA_ESTADO_PADRON).map(([valor, etiqueta]) => (
+              <option key={valor} value={valor}>
+                {etiqueta}
+              </option>
+            ))}
+          </Select>
+          <Select name="estadoFicha" defaultValue={sp.estadoFicha ?? "activa"} className="w-auto">
+            <option value="activa">Activas</option>
+            <option value="archivada">Archivadas</option>
+          </Select>
+          <Button type="submit" variant="secundario">
+            <MdSearch size={18} />
+            Filtrar
+          </Button>
+        </form>
+      </Card>
 
       <Table>
         <TableHead>
@@ -118,18 +137,23 @@ export default async function PersonasPage({
           {personas.map((persona) => (
             <TableRow key={persona.id}>
               <TableCell>
-                <Link
-                  href={`/personas/${persona.id}`}
-                  className="font-semibold text-texto hover:text-secundario"
-                >
-                  {persona.apellido}, {persona.nombre}
+                <Link href={`/personas/${persona.id}`} className="group flex items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secundario/10 text-xs font-semibold text-secundario">
+                    {persona.nombre[0]}
+                    {persona.apellido[0]}
+                  </span>
+                  <span className="font-medium text-texto group-hover:text-secundario">
+                    {persona.apellido}, {persona.nombre}
+                  </span>
                 </Link>
               </TableCell>
               <TableCell>{persona.dni ?? "—"}</TableCell>
               <TableCell>{persona.carrera?.nombre ?? "—"}</TableCell>
               <TableCell>{persona.anio ?? "—"}</TableCell>
               <TableCell>
-                <span className={COLOR_ESTADO_PADRON[persona.estadoPadron]}>
+                <span
+                  className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadron]}`}
+                >
                   {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
                 </span>
               </TableCell>
@@ -141,17 +165,17 @@ export default async function PersonasPage({
       {total > 0 && (
         <div className="flex items-center justify-between text-sm text-texto-secundario">
           <span>
-            {total} persona{total === 1 ? "" : "s"} — página {pagina} de {totalPaginas}
+            Página {pagina} de {totalPaginas}
           </span>
           <div className="flex gap-2">
             {pagina > 1 && (
               <Link href={hrefConFiltro({ pagina: String(pagina - 1) })}>
-                <Button variant="fantasma">Anterior</Button>
+                <Button variant="secundario">Anterior</Button>
               </Link>
             )}
             {pagina < totalPaginas && (
               <Link href={hrefConFiltro({ pagina: String(pagina + 1) })}>
-                <Button variant="fantasma">Siguiente</Button>
+                <Button variant="secundario">Siguiente</Button>
               </Link>
             )}
           </div>
@@ -160,4 +184,3 @@ export default async function PersonasPage({
     </div>
   );
 }
-

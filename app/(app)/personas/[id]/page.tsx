@@ -1,10 +1,13 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
+import { MdArrowBack } from "react-icons/md";
 import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { obtenerPersona } from "@/lib/servicios/personas.service";
 import { prisma } from "@/lib/prisma/client";
 import { CampoEditable } from "@/components/personas/CampoEditable";
 import { PersonaTabs } from "@/components/personas/PersonaTabs";
 import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
 import { actualizarCampoPersonaAction, archivarPersonaAction, restaurarPersonaAction } from "../actions";
 
@@ -35,22 +38,42 @@ export default async function PersonaDetallePage({
   ];
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-lg font-semibold text-texto">
-            {persona.nombre} {persona.apellido}
-          </h1>
-          <p className="text-sm text-texto-secundario">
-            {persona.carrera?.nombre ?? "Sin carrera"} {persona.anio ? `· Año ${persona.anio}` : ""}
-            {" · "}
-            <span className={COLOR_ESTADO_PADRON[persona.estadoPadron]}>
-              {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
-            </span>
-            {persona.estadoFicha === "archivada" && (
-              <span className="ml-2 rounded-borde bg-borde px-2 py-0.5 text-xs">Archivada</span>
-            )}
-          </p>
+    <div className="mx-auto flex max-w-4xl flex-col gap-4">
+      <Link
+        href="/personas"
+        className="inline-flex w-fit items-center gap-1 text-sm text-texto-secundario hover:text-texto"
+      >
+        <MdArrowBack size={16} />
+        Personas
+      </Link>
+
+      <Card className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-4">
+          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-secundario/10 text-lg font-semibold text-secundario">
+            {persona.nombre[0]}
+            {persona.apellido[0]}
+          </span>
+          <div>
+            <h1 className="text-xl font-semibold text-texto">
+              {persona.nombre} {persona.apellido}
+            </h1>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-texto-secundario">
+              <span>
+                {persona.carrera?.nombre ?? "Sin carrera"}
+                {persona.anio ? ` · Año ${persona.anio}` : ""}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadron]}`}
+              >
+                {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
+              </span>
+              {persona.estadoFicha === "archivada" && (
+                <span className="inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium text-texto-secundario">
+                  Archivada
+                </span>
+              )}
+            </p>
+          </div>
         </div>
         {puedeArchivar && (
           <form
@@ -65,9 +88,10 @@ export default async function PersonaDetallePage({
             </Button>
           </form>
         )}
-      </div>
+      </Card>
 
-      <PersonaTabs
+      <Card padding="ninguno">
+        <PersonaTabs
         pestanas={[
           {
             id: "datos",
@@ -188,7 +212,8 @@ export default async function PersonaDetallePage({
             ),
           },
         ]}
-      />
+        />
+      </Card>
     </div>
   );
 }

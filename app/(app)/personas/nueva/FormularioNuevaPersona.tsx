@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import Link from "next/link";
+import { MdExpandMore } from "react-icons/md";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -24,9 +25,10 @@ export function FormularioNuevaPersona({ carreras }: { carreras: Carrera[] }) {
       />
       <Input label="Apellido" name="apellido" required error={estado.erroresCampo?.apellido} />
 
-      <details className="rounded-borde border border-borde">
-        <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-texto-secundario">
+      <details className="group rounded-borde-chico border border-borde">
+        <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm font-semibold text-texto-secundario hover:text-texto">
           Más datos (opcional)
+          <MdExpandMore size={18} className="transition-transform group-open:rotate-180" />
         </summary>
         <div className="flex flex-col gap-4 p-3 pt-0">
           <Input label="DNI" name="dni" inputMode="numeric" error={estado.erroresCampo?.dni} />

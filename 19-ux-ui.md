@@ -44,7 +44,7 @@ Los tokens se definen como variables CSS (Tailwind `theme.extend.colors`, ver [`
 
 ## 3. Tipografía
 
-- Familia tipográfica: **Montserrat**, consistente con el resto de las piezas de comunicación de ATP.
+- Familia tipográfica: **Inter** (actualizado durante la Fase 1 de implementación — Montserrat, si bien consistente con las piezas de comunicación de ATP, se sintió "tight"/apretada para UI densa de web; Inter es el estándar de facto en SaaS moderno y se lee mejor a tamaños chicos en pantalla). Decisión confirmada por Gaspar; si se revierte, actualizar también `app/layout.tsx` y `app/globals.css`.
 - Escala tipográfica limitada a 6 tamaños (de texto auxiliar a título de página), evitando la proliferación de tamaños ad-hoc.
 - Peso `600` (semibold) para títulos y elementos interactivos, `400` (regular) para texto de cuerpo — sin uso de peso `700` o superior, que se reserva para piezas de difusión, no para la interfaz de la herramienta.
 

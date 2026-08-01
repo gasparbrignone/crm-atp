@@ -15,7 +15,7 @@ export function PersonaTabs({ pestanas }: { pestanas: Pestana[] }) {
 
   return (
     <div>
-      <div role="tablist" className="flex gap-1 border-b border-borde overflow-x-auto">
+      <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-borde px-5">
         {pestanas.map((p) => (
           <button
             key={p.id}
@@ -23,7 +23,7 @@ export function PersonaTabs({ pestanas }: { pestanas: Pestana[] }) {
             aria-selected={activa === p.id}
             onClick={() => setActiva(p.id)}
             className={cn(
-              "min-h-11 whitespace-nowrap border-b-2 px-3 text-sm font-semibold",
+              "min-h-12 whitespace-nowrap border-b-2 px-2 text-sm font-semibold transition-colors",
               activa === p.id
                 ? "border-primario text-primario"
                 : "border-transparent text-texto-secundario hover:text-texto",
@@ -33,7 +33,7 @@ export function PersonaTabs({ pestanas }: { pestanas: Pestana[] }) {
           </button>
         ))}
       </div>
-      <div className="py-4">{pestanas.find((p) => p.id === activa)?.contenido}</div>
+      <div className="p-5">{pestanas.find((p) => p.id === activa)?.contenido}</div>
     </div>
   );
 }

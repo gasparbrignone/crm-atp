@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requerirPermiso } from "@/lib/permisos/permisos";
 import { prisma } from "@/lib/prisma/client";
+import { Card } from "@/components/ui/Card";
 import { FormularioNuevaPersona } from "./FormularioNuevaPersona";
 
 // Alta manual — objetivo: menos de 30 segundos desde mobile
@@ -16,12 +17,14 @@ export default async function NuevaPersonaPage() {
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-texto">Nueva persona</h1>
+        <h1 className="text-xl font-semibold text-texto">Nueva persona</h1>
         <Link href="/personas" className="text-sm text-secundario hover:underline">
           Cancelar
         </Link>
       </div>
-      <FormularioNuevaPersona carreras={carreras} />
+      <Card>
+        <FormularioNuevaPersona carreras={carreras} />
+      </Card>
     </div>
   );
 }

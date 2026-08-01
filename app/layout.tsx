@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
-import { Montserrat } from "next/font/google";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
-const montserrat = Montserrat({
-  variable: "--font-montserrat",
+// Desvío deliberado de /19-ux-ui.md sección 3 (que especifica Montserrat):
+// Gaspar pidió cambiarla por sentirse "tight" para UI densa de web — Inter es
+// el estándar de facto en SaaS moderno (Linear, Vercel, GitHub) y se lee mejor
+// en pantallas a tamaños chicos. Actualizar el doc si se confirma en forma
+// definitiva.
+const inter = Inter({
+  variable: "--font-inter",
   subsets: ["latin"],
-  weight: ["400", "600"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -34,7 +39,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${montserrat.variable} h-full antialiased`}>
+    <html lang="es" className={`${inter.variable} h-full antialiased`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>

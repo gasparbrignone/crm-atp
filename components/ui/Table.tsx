@@ -9,14 +9,16 @@ import { cn } from "@/lib/utils/cn";
 
 export function Table({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className="w-full overflow-x-auto rounded-borde border border-borde">
+    <div className="w-full overflow-x-auto rounded-borde border border-borde bg-fondo-superficie shadow-tarjeta">
       <table className={cn("w-full border-collapse text-sm", className)}>{children}</table>
     </div>
   );
 }
 
 export function TableHead({ children }: { children: ReactNode }) {
-  return <thead className="bg-borde/30 text-left">{children}</thead>;
+  return (
+    <thead className="border-b border-borde bg-fondo-hover/60 text-left">{children}</thead>
+  );
 }
 
 export function TableBody({ children }: { children: ReactNode }) {
@@ -36,9 +38,9 @@ export function TableRow({
     <tr
       onClick={onClick}
       className={cn(
-        "hover:bg-borde/20",
+        "transition-colors hover:bg-fondo-hover",
         onClick && "cursor-pointer",
-        selected && "bg-primario/10",
+        selected && "bg-primario/5",
       )}
     >
       {children}
@@ -56,7 +58,10 @@ export function TableHeaderCell({
   return (
     <th
       scope="col"
-      className={cn("px-4 py-3 font-semibold text-texto-secundario whitespace-nowrap", className)}
+      className={cn(
+        "px-4 py-3 text-xs font-semibold uppercase tracking-wide text-texto-secundario whitespace-nowrap",
+        className,
+      )}
     >
       {children}
     </th>
@@ -70,13 +75,13 @@ export function TableCell({
   children: ReactNode;
   className?: string;
 }) {
-  return <td className={cn("px-4 py-3 text-texto", className)}>{children}</td>;
+  return <td className={cn("px-4 py-3.5 text-texto", className)}>{children}</td>;
 }
 
 export function TableEmptyState({ children }: { children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={999} className="px-4 py-10 text-center text-texto-secundario">
+      <td colSpan={999} className="px-4 py-14 text-center text-texto-secundario">
         {children}
       </td>
     </tr>

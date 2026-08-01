@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { MdLightMode, MdDarkMode } from "react-icons/md";
 
 type Tema = "light" | "dark";
 
@@ -34,9 +35,9 @@ export function ThemeToggle() {
       type="button"
       onClick={alternar}
       aria-label={tema === "dark" ? "Cambiar a modo claro" : "Cambiar a modo oscuro"}
-      className="inline-flex h-11 w-11 items-center justify-center rounded-borde text-texto hover:bg-borde/40"
+      className="inline-flex h-11 w-11 items-center justify-center rounded-borde-chico text-texto-secundario transition-colors hover:bg-fondo-hover hover:text-texto"
     >
-      {tema === "dark" ? "☀️" : "🌙"}
+      {tema === "dark" ? <MdLightMode size={20} /> : <MdDarkMode size={20} />}
     </button>
   );
 }

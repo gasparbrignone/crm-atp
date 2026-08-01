@@ -37,7 +37,7 @@ export function Modal({ abierto, onCerrar, titulo, children, variante = "default
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="fixed inset-0 bg-black/50"
+        className="fixed inset-0 bg-black/40 backdrop-blur-[2px]"
         aria-hidden="true"
         onClick={onCerrar}
       />
@@ -48,7 +48,7 @@ export function Modal({ abierto, onCerrar, titulo, children, variante = "default
         aria-labelledby="modal-titulo"
         tabIndex={-1}
         className={cn(
-          "relative z-10 w-full max-w-md rounded-borde border bg-fondo-superficie p-6 shadow-lg focus:outline-none",
+          "relative z-10 w-full max-w-md rounded-borde border bg-fondo-superficie p-6 shadow-flotante focus:outline-none",
           variante === "destructiva" ? "border-error" : "border-borde",
         )}
       >

@@ -184,6 +184,20 @@ const CARRERAS = [
   { nombre: "Licenciatura en Terapia Ocupacional", duracionAnios: 4, orden: 4 },
 ] as const;
 
+// Catálogo inicial de TipoActividad — /04-modelo-datos.md sección 4.2 y
+// /06-modulo-actividades.md sección 2: catálogo administrable, no cerrado.
+// Colores de referencia (paleta consistente con /19-ux-ui.md sección 2, colores
+// semánticos con propósito, no decorativos) — reusables en calendario y dashboard.
+const TIPOS_ACTIVIDAD = [
+  { nombre: "Repaso", color: "#2563eb", orden: 1 },
+  { nombre: "Grupo de estudio", color: "#0891b2", orden: 2 },
+  { nombre: "Simulacro", color: "#7c3aed", orden: 3 },
+  { nombre: "Congreso", color: "#b91c1c", orden: 4 },
+  { nombre: "Capacitación", color: "#0f766e", orden: 5 },
+  { nombre: "Charla", color: "#c2410c", orden: 6 },
+  { nombre: "Jornada", color: "#a16207", orden: 7 },
+] as const;
+
 async function main() {
   console.log("Sembrando catálogo de carreras...");
   for (const carrera of CARRERAS) {
@@ -191,6 +205,15 @@ async function main() {
       where: { nombre: carrera.nombre },
       update: {},
       create: carrera,
+    });
+  }
+
+  console.log("Sembrando catálogo de tipos de actividad...");
+  for (const tipo of TIPOS_ACTIVIDAD) {
+    await prisma.tipoActividad.upsert({
+      where: { nombre: tipo.nombre },
+      update: {},
+      create: tipo,
     });
   }
 

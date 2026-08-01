@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import { crearPersona } from "@/lib/servicios/personas.service";
 import type { EstadoSeguimientoPunteo } from "@prisma/client";
 
 // Punteo electoral — /08-modulo-punteo-electoral.md. Módulo con el requisito
@@ -75,6 +76,36 @@ export async function buscarPersonasParaPuntear(query: string) {
     take: 10,
     orderBy: [{ apellido: "asc" }, { nombre: "asc" }],
   });
+}
+
+export interface DatosPersonaMinimos {
+  nombre: string;
+  apellido: string;
+  telefono?: string;
+}
+
+// Alta manual desde la pantalla de punteo — /08-modulo-punteo-electoral.md
+// sección 5: el punteo releva potenciales votantes, no solo gente que ya
+// pasó por una Actividad o una importación. Reusa crearPersona() tal cual
+// (misma validación de DNI único, mismo registro en HistorialCambio) para no
+// duplicar reglas de alta de Persona — acá solo se resuelve el caso mínimo
+// (nombre + apellido, sin DNI) porque el punteo de campo rara vez lo tiene a
+// mano.
+export async function crearPersonaDesdePunteo(datos: DatosPersonaMinimos, usuarioId: string) {
+  return crearPersona(
+    {
+      nombre: datos.nombre,
+      apellido: datos.apellido,
+      telefono: datos.telefono || undefined,
+      dni: undefined,
+      legajo: undefined,
+      carreraId: undefined,
+      anio: undefined,
+      instagram: undefined,
+      observacionesGenerales: undefined,
+    },
+    usuarioId,
+  );
 }
 
 export async function listarClasificacionesPunteo() {

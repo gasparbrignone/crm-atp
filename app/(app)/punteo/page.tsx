@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requerirPermiso } from "@/lib/permisos/permisos";
+import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { listarMiPunteo } from "@/lib/servicios/punteo.service";
 import { Card } from "@/components/ui/Card";
 import { BuscadorPuntearPersona } from "@/components/punteo/BuscadorPuntearPersona";
@@ -15,7 +15,10 @@ export default async function PunteoPage() {
   const usuario = await requerirPermiso("punteo.ver_propio");
   const puedeVerTodos = usuario.rol.permisos.some((rp) => rp.permiso.codigo === "punteo.ver_todos");
 
-  const miPunteo = await listarMiPunteo({ usuarioId: usuario.id, puedeVerTodos });
+  const [miPunteo, puedeCrearPersona] = await Promise.all([
+    listarMiPunteo({ usuarioId: usuario.id, puedeVerTodos }),
+    tienePermiso("personas.crear"),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-6">
@@ -27,7 +30,7 @@ export default async function PunteoPage() {
         </p>
       </div>
 
-      <BuscadorPuntearPersona />
+      <BuscadorPuntearPersona puedeCrearPersona={puedeCrearPersona} />
 
       {miPunteo.length === 0 ? (
         <Card className="text-center text-sm text-texto-secundario">

@@ -1,0 +1,600 @@
+// Prisma schema — CRM ATP
+// Traducción técnica de /04-modelo-datos.md (fuente de verdad funcional).
+// No correr migraciones hasta confirmación explícita (ver checkpoint de Fase 0 en /20-roadmap.md).
+//
+// Convenciones de nombres: modelos y campos de negocio en español (lenguaje ubicuo de
+// /02-glosario.md), en camelCase por convención de Prisma. Ver /CLAUDE.md sección 4.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Enums
+// ─────────────────────────────────────────────────────────────────────────
+
+enum EstadoPadronPersona {
+  no_evaluado
+  en_padron_habilitado
+  en_padron_no_habilitado
+  no_encontrado_en_padron
+}
+
+enum EstadoFicha {
+  activa
+  archivada
+  fusionada
+}
+
+enum ModalidadActividad {
+  presencial
+  virtual
+  hibrida
+}
+
+enum EstadoActividad {
+  planificada
+  en_curso
+  finalizada
+  cancelada
+}
+
+enum EstadoParticipacion {
+  inscripto
+  confirmado
+  asistio
+  ausente
+  cancelado
+}
+
+enum EstadoSeguimientoPunteo {
+  sin_iniciar
+  en_seguimiento
+  contactado
+  requiere_reintento
+  cerrado
+}
+
+enum EstadoPadronElectoral {
+  borrador
+  activo
+  cerrado
+}
+
+enum EstadoMatchingPadron {
+  pendiente
+  vinculado_automatico
+  vinculado_manual
+  sin_coincidencia
+}
+
+enum AccionHistorial {
+  crear
+  editar
+  archivar
+  restaurar
+  fusionar
+  exportar
+  importar
+  login
+  cambio_permiso
+  otro
+}
+
+enum TipoNotificacion {
+  informativa
+  accionable
+  alerta
+}
+
+enum EstadoUsuario {
+  activo
+  inactivo
+}
+
+enum TipoOrigenImport {
+  google_sheets
+  csv
+  excel
+  pdf
+}
+
+enum EntidadDestinoImport {
+  Persona
+  PadronElectoral
+  Actividad
+}
+
+enum EstadoImportJob {
+  pendiente
+  procesando
+  en_revision
+  completado
+  completado_con_errores
+  fallido
+}
+
+enum EntidadOrigenExport {
+  Persona
+  Actividad
+  Participacion
+  PadronElectoral
+}
+
+enum FormatoExport {
+  csv
+  excel
+  pdf
+}
+
+enum RolMensajeChatbot {
+  usuario
+  asistente
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 4. Catálogos base — /04-modelo-datos.md sección 4
+// ─────────────────────────────────────────────────────────────────────────
+
+model Carrera {
+  id            String  @id @default(uuid())
+  nombre        String  @unique
+  duracionAnios Int?
+  activo        Boolean @default(true)
+  orden         Int?
+
+  personas Persona[]
+
+  @@index([activo])
+}
+
+model TipoActividad {
+  id     String  @id @default(uuid())
+  nombre String  @unique
+  color  String?
+  activo Boolean @default(true)
+  orden  Int?
+
+  actividades Actividad[]
+
+  @@index([activo])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 5. Núcleo: Persona — /04-modelo-datos.md sección 5
+// ─────────────────────────────────────────────────────────────────────────
+
+model Persona {
+  id                     String              @id @default(uuid())
+  nombre                 String
+  apellido               String
+  dni                    String?             @unique
+  legajo                 String?             @unique
+  carreraId              String?
+  carrera                Carrera?            @relation(fields: [carreraId], references: [id])
+  anio                   Int?
+  instagram              String?
+  observacionesGenerales String?
+  estadoPadron           EstadoPadronPersona @default(no_evaluado)
+  estadoFicha            EstadoFicha         @default(activa)
+  fusionadaEnId          String?
+  fusionadaEn            Persona?            @relation("PersonaFusion", fields: [fusionadaEnId], references: [id])
+  fusionesRecibidas      Persona[]           @relation("PersonaFusion")
+
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+  creadoPorId       String?
+  creadoPor         Usuario? @relation("PersonaCreadoPor", fields: [creadoPorId], references: [id])
+  modificadoPorId   String?
+  modificadoPor     Usuario? @relation("PersonaModificadoPor", fields: [modificadoPorId], references: [id])
+
+  telefonos       PersonaTelefono[]
+  emails          PersonaEmail[]
+  etiquetas       PersonaEtiqueta[]
+  participaciones Participacion[]
+  punteos         PunteoPersona[]
+  padronEntradas  PadronEntrada[]
+
+  @@index([carreraId, anio, estadoPadron])
+  @@index([apellido, nombre])
+}
+
+model PersonaTelefono {
+  id          String  @id @default(uuid())
+  personaId   String
+  persona     Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  numero      String
+  esPrincipal Boolean @default(false)
+  notas       String?
+
+  @@index([personaId])
+}
+
+model PersonaEmail {
+  id          String  @id @default(uuid())
+  personaId   String
+  persona     Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  email       String
+  esPrincipal Boolean @default(false)
+
+  @@index([personaId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 6. Núcleo: Actividad y Participación — /04-modelo-datos.md sección 6
+// ─────────────────────────────────────────────────────────────────────────
+
+model Actividad {
+  id               String             @id @default(uuid())
+  nombre           String
+  tipoActividadId  String
+  tipoActividad    TipoActividad      @relation(fields: [tipoActividadId], references: [id])
+  descripcion      String?
+  fechaInicio      DateTime
+  fechaFin         DateTime?
+  modalidad        ModalidadActividad @default(presencial)
+  lugar            String?
+  cupoMaximo       Int?
+  estado           EstadoActividad    @default(planificada)
+  responsableId    String
+  responsable      Usuario            @relation("ActividadResponsable", fields: [responsableId], references: [id])
+  actividadPadreId String?
+  actividadPadre   Actividad?         @relation("ActividadPadre", fields: [actividadPadreId], references: [id])
+  subActividades   Actividad[]        @relation("ActividadPadre")
+  observaciones    String?
+
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+  creadoPorId       String?
+  creadoPor         Usuario? @relation("ActividadCreadoPor", fields: [creadoPorId], references: [id])
+  modificadoPorId   String?
+  modificadoPor     Usuario? @relation("ActividadModificadoPor", fields: [modificadoPorId], references: [id])
+
+  participaciones Participacion[]
+
+  @@index([tipoActividadId])
+  @@index([actividadPadreId])
+  @@index([responsableId])
+  @@index([fechaInicio])
+}
+
+model Participacion {
+  id               String              @id @default(uuid())
+  personaId        String
+  persona          Persona             @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  actividadId      String
+  actividad        Actividad           @relation(fields: [actividadId], references: [id], onDelete: Cascade)
+  estado           EstadoParticipacion @default(inscripto)
+  fechaInscripcion DateTime            @default(now())
+  fechaAsistencia  DateTime?
+  observaciones    String?
+
+  fechaCreacion     DateTime @default(now())
+  fechaModificacion DateTime @updatedAt
+  creadoPorId       String?
+  creadoPor         Usuario? @relation("ParticipacionCreadoPor", fields: [creadoPorId], references: [id])
+  modificadoPorId   String?
+  modificadoPor     Usuario? @relation("ParticipacionModificadoPor", fields: [modificadoPorId], references: [id])
+
+  @@unique([personaId, actividadId])
+  @@index([actividadId])
+  @@index([personaId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 7. Etiquetado — /04-modelo-datos.md sección 7
+// ─────────────────────────────────────────────────────────────────────────
+
+model Etiqueta {
+  id          String   @id @default(uuid())
+  nombre      String   @unique
+  color       String?
+  categoria   String?
+  activo      Boolean  @default(true)
+  creadoPorId String?
+  creadoPor   Usuario? @relation("EtiquetaCreadoPor", fields: [creadoPorId], references: [id])
+
+  personas PersonaEtiqueta[]
+
+  @@index([activo])
+}
+
+model PersonaEtiqueta {
+  id              String   @id @default(uuid())
+  personaId       String
+  persona         Persona  @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  etiquetaId      String
+  etiqueta        Etiqueta @relation(fields: [etiquetaId], references: [id], onDelete: Cascade)
+  fechaAsignacion DateTime @default(now())
+  asignadoPorId   String?
+  asignadoPor     Usuario? @relation("PersonaEtiquetaAsignadoPor", fields: [asignadoPorId], references: [id])
+
+  @@unique([personaId, etiquetaId])
+  @@index([etiquetaId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 8. Usuarios, roles y permisos — /04-modelo-datos.md sección 8
+// ─────────────────────────────────────────────────────────────────────────
+
+model Usuario {
+  id            String        @id
+  nombre        String
+  apellido      String
+  email         String        @unique
+  rolId         String
+  rol           Rol           @relation(fields: [rolId], references: [id])
+  estado        EstadoUsuario @default(activo)
+  telefono      String?
+  ultimoAcceso  DateTime?
+  fechaCreacion DateTime      @default(now())
+
+  personasCreadas             Persona[]              @relation("PersonaCreadoPor")
+  personasModificadas         Persona[]              @relation("PersonaModificadoPor")
+  actividadesResponsable      Actividad[]            @relation("ActividadResponsable")
+  actividadesCreadas          Actividad[]            @relation("ActividadCreadoPor")
+  actividadesModificadas      Actividad[]            @relation("ActividadModificadoPor")
+  participacionesCreadas      Participacion[]        @relation("ParticipacionCreadoPor")
+  participacionesModificadas  Participacion[]        @relation("ParticipacionModificadoPor")
+  etiquetasCreadas            Etiqueta[]             @relation("EtiquetaCreadoPor")
+  personaEtiquetasAsignadas   PersonaEtiqueta[]      @relation("PersonaEtiquetaAsignadoPor")
+  punteos                     PunteoPersona[]
+  padronesElectoralesCargados PadronElectoral[]      @relation("PadronElectoralCargadoPor")
+  historialCambios            HistorialCambio[]
+  notificaciones              Notificacion[]
+  importJobs                  ImportJob[]
+  exportJobs                  ExportJob[]
+  configuracionesModificadas  ConfiguracionSistema[] @relation("ConfiguracionSistemaModificadoPor")
+  chatbotConversaciones       ChatbotConversacion[]
+
+  @@index([rolId])
+}
+
+model Rol {
+  id           String  @id @default(uuid())
+  nombre       String  @unique
+  descripcion  String?
+  esRolSistema Boolean @default(false)
+
+  usuarios Usuario[]
+  permisos RolPermiso[]
+}
+
+model Permiso {
+  id          String @id @default(uuid())
+  codigo      String @unique
+  modulo      String
+  descripcion String
+
+  roles RolPermiso[]
+
+  @@index([modulo])
+}
+
+model RolPermiso {
+  id        String  @id @default(uuid())
+  rolId     String
+  rol       Rol     @relation(fields: [rolId], references: [id], onDelete: Cascade)
+  permisoId String
+  permiso   Permiso @relation(fields: [permisoId], references: [id], onDelete: Cascade)
+
+  @@unique([rolId, permisoId])
+  @@index([permisoId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 9. Punteo — /04-modelo-datos.md sección 9
+// ─────────────────────────────────────────────────────────────────────────
+
+model ClasificacionPunteo {
+  id     String  @id @default(uuid())
+  nombre String  @unique
+  color  String?
+  orden  Int?
+  activo Boolean @default(true)
+
+  punteos PunteoPersona[]
+
+  @@index([activo])
+}
+
+model PunteoPersona {
+  id                       String                  @id @default(uuid())
+  usuarioId                String
+  usuario                  Usuario                 @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  personaId                String
+  persona                  Persona                 @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  clasificacionId          String?
+  clasificacion            ClasificacionPunteo?    @relation(fields: [clasificacionId], references: [id])
+  estadoSeguimiento        EstadoSeguimientoPunteo @default(sin_iniciar)
+  fechaUltimaActualizacion DateTime                @updatedAt
+
+  comentarios PunteoComentario[]
+
+  @@unique([usuarioId, personaId])
+  @@index([usuarioId, personaId])
+  @@index([personaId])
+}
+
+model PunteoComentario {
+  id              String        @id @default(uuid())
+  punteoPersonaId String
+  punteoPersona   PunteoPersona @relation(fields: [punteoPersonaId], references: [id], onDelete: Cascade)
+  contenido       String
+  fechaCreacion   DateTime      @default(now())
+
+  @@index([punteoPersonaId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 10. Padrón electoral — /04-modelo-datos.md sección 10
+// ─────────────────────────────────────────────────────────────────────────
+
+model PadronElectoral {
+  id              String                @id @default(uuid())
+  nombre          String
+  fechaEleccion   DateTime?             @db.Date
+  estado          EstadoPadronElectoral @default(borrador)
+  archivoOrigenId String?
+  fechaCarga      DateTime              @default(now())
+  cargadoPorId    String?
+  cargadoPor      Usuario?              @relation("PadronElectoralCargadoPor", fields: [cargadoPorId], references: [id])
+
+  entradas PadronEntrada[]
+
+  @@index([estado])
+}
+
+model PadronEntrada {
+  id                     String               @id @default(uuid())
+  padronElectoralId      String
+  padronElectoral        PadronElectoral      @relation(fields: [padronElectoralId], references: [id], onDelete: Cascade)
+  dni                    String
+  nombreCompletoOriginal String
+  carreraTextoOriginal   String?
+  personaId              String?
+  persona                Persona?             @relation(fields: [personaId], references: [id])
+  estadoMatching         EstadoMatchingPadron @default(pendiente)
+  confianzaMatching      Decimal?             @db.Decimal(3, 2)
+
+  @@index([padronElectoralId])
+  @@index([dni])
+  @@index([personaId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 11. Historial y auditoría — /04-modelo-datos.md sección 11
+// ─────────────────────────────────────────────────────────────────────────
+
+model HistorialCambio {
+  id            String          @id @default(uuid())
+  entidad       String
+  entidadId     String
+  accion        AccionHistorial
+  campo         String?
+  valorAnterior String?
+  valorNuevo    String?
+  usuarioId     String?
+  usuario       Usuario?        @relation(fields: [usuarioId], references: [id])
+  fecha         DateTime        @default(now())
+  metadata      String?
+
+  @@index([entidad, entidadId, fecha])
+  @@index([usuarioId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 12. Notificaciones — /04-modelo-datos.md sección 12
+// ─────────────────────────────────────────────────────────────────────────
+
+model Notificacion {
+  id                   String           @id @default(uuid())
+  usuarioId            String
+  usuario              Usuario          @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  tipo                 TipoNotificacion
+  titulo               String
+  mensaje              String
+  entidadRelacionada   String?
+  entidadRelacionadaId String?
+  leida                Boolean          @default(false)
+  fechaCreacion        DateTime         @default(now())
+  fechaLectura         DateTime?
+
+  @@index([usuarioId, leida])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 13. Importaciones y exportaciones — /04-modelo-datos.md sección 13
+// ─────────────────────────────────────────────────────────────────────────
+
+model ImportJob {
+  id                   String               @id @default(uuid())
+  tipoOrigen           TipoOrigenImport
+  entidadDestino       EntidadDestinoImport
+  estado               EstadoImportJob      @default(pendiente)
+  archivoOrigenId      String?
+  totalFilas           Int?
+  filasExitosas        Int                  @default(0)
+  filasConError        Int                  @default(0)
+  duplicadosDetectados Int                  @default(0)
+  usuarioId            String
+  usuario              Usuario              @relation(fields: [usuarioId], references: [id])
+  fechaInicio          DateTime             @default(now())
+  fechaFin             DateTime?
+
+  errores ImportJobError[]
+
+  @@index([usuarioId])
+  @@index([estado])
+}
+
+model ImportJobError {
+  id                String    @id @default(uuid())
+  importJobId       String
+  importJob         ImportJob @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  numeroFila        Int
+  contenidoOriginal String
+  mensajeError      String
+
+  @@index([importJobId])
+}
+
+model ExportJob {
+  id               String              @id @default(uuid())
+  entidadOrigen    EntidadOrigenExport
+  formato          FormatoExport
+  filtrosAplicados String?
+  usuarioId        String
+  usuario          Usuario             @relation(fields: [usuarioId], references: [id])
+  fecha            DateTime            @default(now())
+
+  @@index([usuarioId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 14. Configuración del sistema — /04-modelo-datos.md sección 14
+// ─────────────────────────────────────────────────────────────────────────
+
+model ConfiguracionSistema {
+  id                String   @id @default(uuid())
+  clave             String   @unique
+  valor             String
+  descripcion       String?
+  modificadoPorId   String?
+  modificadoPor     Usuario? @relation("ConfiguracionSistemaModificadoPor", fields: [modificadoPorId], references: [id])
+  fechaModificacion DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// 15. Chatbot de IA — /04-modelo-datos.md sección 15
+// ─────────────────────────────────────────────────────────────────────────
+
+model ChatbotConversacion {
+  id            String   @id @default(uuid())
+  usuarioId     String
+  usuario       Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  titulo        String?
+  fechaCreacion DateTime @default(now())
+
+  mensajes ChatbotMensaje[]
+
+  @@index([usuarioId])
+}
+
+model ChatbotMensaje {
+  id                  String              @id @default(uuid())
+  conversacionId      String
+  conversacion        ChatbotConversacion @relation(fields: [conversacionId], references: [id], onDelete: Cascade)
+  rol                 RolMensajeChatbot
+  contenido           String
+  consultasEjecutadas String?
+  fechaCreacion       DateTime            @default(now())
+
+  @@index([conversacionId])
+}

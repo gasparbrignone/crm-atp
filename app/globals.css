@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — ver /19-ux-ui.md sección 2 y 3.
+ * Los 5 colores de identidad ATP se usan exclusivamente como colores
+ * semánticos de estado (nunca como paleta decorativa múltiple en pantalla).
+ * Modo oscuro: mismos tonos de marca ajustados en luminosidad para mantener
+ * el contraste mínimo 4.5:1 exigido en la sección 9 (accesibilidad).
+ */
+:root {
+  --color-primario: #f969d7;
+  --color-secundario: #2e5699;
+  --color-exito: #29a843;
+  --color-alerta: #f9c900;
+  --color-error: #e8231a;
+
+  --color-fondo: #ffffff;
+  --color-fondo-superficie: #ffffff;
+  --color-texto: #171717;
+  --color-texto-secundario: #52525b;
+  --color-borde: #e4e4e7;
+
+  --radio-borde: 5px;
+}
+
+:root[data-theme="dark"] {
+  --color-primario: #ff8fe1;
+  --color-secundario: #6d93d6;
+  --color-exito: #4fc767;
+  --color-alerta: #ffd83d;
+  --color-error: #ff5c52;
+
+  --color-fondo: #0a0a0a;
+  --color-fondo-superficie: #18181b;
+  --color-texto: #f4f4f5;
+  --color-texto-secundario: #a1a1aa;
+  --color-borde: #2e2e33;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-primario: #ff8fe1;
+    --color-secundario: #6d93d6;
+    --color-exito: #4fc767;
+    --color-alerta: #ffd83d;
+    --color-error: #ff5c52;
+
+    --color-fondo: #0a0a0a;
+    --color-fondo-superficie: #18181b;
+    --color-texto: #f4f4f5;
+    --color-texto-secundario: #a1a1aa;
+    --color-borde: #2e2e33;
+  }
+}
+
+@theme inline {
+  --color-primario: var(--color-primario);
+  --color-secundario: var(--color-secundario);
+  --color-exito: var(--color-exito);
+  --color-alerta: var(--color-alerta);
+  --color-error: var(--color-error);
+
+  --color-fondo: var(--color-fondo);
+  --color-fondo-superficie: var(--color-fondo-superficie);
+  --color-texto: var(--color-texto);
+  --color-texto-secundario: var(--color-texto-secundario);
+  --color-borde: var(--color-borde);
+
+  --radius-borde: var(--radio-borde);
+
+  --font-sans: var(--font-montserrat);
+}
+
+body {
+  background: var(--color-fondo);
+  color: var(--color-texto);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}

@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { IconType } from "react-icons";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils/cn";
 
 export interface EnlaceNav {
   href: string;
   etiqueta: string;
-  icono: IconType;
+  // JSX ya renderizado (ej. <MdGroup size={18} />), no el componente en sí:
+  // pasar el componente-función cruza el límite Server→Client como una
+  // función, que RSC no puede serializar. Un elemento ya instanciado sí.
+  icono: ReactNode;
 }
 
 // Navegación principal — barra lateral en desktop, ver /19-ux-ui.md sección 5.
@@ -27,7 +30,6 @@ export function Sidebar({ enlaces }: { enlaces: EnlaceNav[] }) {
       <nav className="flex flex-col gap-0.5 px-3">
         {enlaces.map((enlace) => {
           const activo = pathname === enlace.href || pathname.startsWith(`${enlace.href}/`);
-          const Icono = enlace.icono;
           return (
             <Link
               key={enlace.href}
@@ -39,7 +41,7 @@ export function Sidebar({ enlaces }: { enlaces: EnlaceNav[] }) {
                   : "text-texto-secundario hover:bg-fondo-hover hover:text-texto",
               )}
             >
-              <Icono size={18} />
+              {enlace.icono}
               {enlace.etiqueta}
             </Link>
           );

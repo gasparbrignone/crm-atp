@@ -14,7 +14,6 @@ export function BottomNav({ enlaces }: { enlaces: EnlaceNav[] }) {
     <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-borde bg-fondo-superficie/95 backdrop-blur md:hidden">
       {enlaces.map((enlace) => {
         const activo = pathname === enlace.href || pathname.startsWith(`${enlace.href}/`);
-        const Icono = enlace.icono;
         return (
           <Link
             key={enlace.href}
@@ -24,7 +23,7 @@ export function BottomNav({ enlaces }: { enlaces: EnlaceNav[] }) {
               activo ? "text-primario" : "text-texto-secundario",
             )}
           >
-            <Icono size={20} />
+            {enlace.icono}
             {enlace.etiqueta}
           </Link>
         );

@@ -8,10 +8,28 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { tienePermiso } from "@/lib/permisos/permisos";
 import { cerrarSesion } from "./actions";
 
+// Los íconos se instancian acá (JSX ya renderizado), no se pasan como
+// referencia de componente: un Server Component no puede pasarle una función
+// a un Client Component, pero sí un elemento React ya construido.
 const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
-  { href: "/dashboard", etiqueta: "Dashboard", icono: MdSpaceDashboard, permiso: "dashboard.ver_personal" },
-  { href: "/personas", etiqueta: "Personas", icono: MdGroup, permiso: "personas.ver" },
-  { href: "/importar", etiqueta: "Importar", icono: MdUploadFile, permiso: "importaciones.ejecutar" },
+  {
+    href: "/dashboard",
+    etiqueta: "Dashboard",
+    icono: <MdSpaceDashboard size={18} />,
+    permiso: "dashboard.ver_personal",
+  },
+  {
+    href: "/personas",
+    etiqueta: "Personas",
+    icono: <MdGroup size={18} />,
+    permiso: "personas.ver",
+  },
+  {
+    href: "/importar",
+    etiqueta: "Importar",
+    icono: <MdUploadFile size={18} />,
+    permiso: "importaciones.ejecutar",
+  },
 ];
 
 // Layout de las rutas autenticadas — ver /03-arquitectura.md sección 4.

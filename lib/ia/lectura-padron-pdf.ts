@@ -1,22 +1,25 @@
 import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
 
-// pdf-parse (vía pdfjs-dist) rompió la carga de módulo de rutas que ni
-// siquiera usan lectura de PDF (bug real 2026-08-02: /padron, /personas y
-// /punteo tiraban 500 porque este archivo se importa transitivamente desde
-// personas.service.ts) — se importa acá dinámicamente, dentro de la función
-// que realmente lee un PDF, para que un problema de esta dependencia quede
-// acotado a esa única acción en vez de tumbar rutas que no la usan.
-
 // Lectura automática de padrones en PDF — /15-ia.md sección 4 y
 // /09-modulo-padron-electoral.md sección 4. Los padrones que carga ATP son
 // siempre PDF con texto seleccionable (nunca escaneados/foto — confirmado
 // con Gaspar, 2026-08-02), así que en vez de mandarle a la IA una imagen de
 // cada página (caro, y con el volumen de un padrón real se corta la
 // respuesta a mitad de camino — bug real detectado el mismo día, ver
-// CLAUDE.md), se extrae el texto seleccionable directo del PDF con pdf-parse
-// y se le pasa como texto a la IA solo para estructurarlo en filas — mucho
-// más barato, más rápido, y sin el riesgo de truncamiento de la lectura por
-// imagen.
+// CLAUDE.md), se extrae el texto seleccionable directo del PDF y se le pasa
+// como texto a la IA solo para estructurarlo en filas — mucho más barato,
+// más rápido, y sin el riesgo de truncamiento de la lectura por imagen.
+//
+// Se usa `unpdf` (no `pdf-parse`/`pdfjs-dist` directo): pdfjs-dist intenta
+// cargar un addon nativo (@napi-rs/canvas) para polyfillear Canvas/DOMMatrix
+// incluso para extracción de texto pura, y ese addon nativo no queda
+// disponible en el runtime serverless de Vercel pase lo que se configure en
+// next.config — rompió /padron, /personas y /punteo en producción (bug real
+// 2026-08-02, ver CLAUDE.md). `unpdf` empaqueta su propio build de
+// pdfjs-dist pensado específicamente para entornos serverless/edge, sin esa
+// dependencia nativa. Se importa dinámicamente igual, como capa extra de
+// aislamiento para que un problema futuro de esta dependencia quede acotado
+// a esta única acción.
 
 // ~90 filas de padrón por lote (a ~65 caracteres por fila) — deja margen
 // generoso para que la respuesta en JSON nunca se acerque al límite de
@@ -73,16 +76,16 @@ function extraerJson(texto: string): unknown {
 
 // Agrupa el texto por página en lotes de hasta CARACTERES_POR_LOTE, sin
 // cortar una página a la mitad (una fila de padrón nunca cruza una página).
-function agruparEnLotes(paginas: { text: string; num: number }[]): string[] {
+function agruparEnLotes(textoPorPagina: string[]): string[] {
   const lotes: string[] = [];
   let loteActual = "";
 
-  for (const pagina of paginas) {
-    if (loteActual && loteActual.length + pagina.text.length > CARACTERES_POR_LOTE) {
+  for (const texto of textoPorPagina) {
+    if (loteActual && loteActual.length + texto.length > CARACTERES_POR_LOTE) {
       lotes.push(loteActual);
       loteActual = "";
     }
-    loteActual += (loteActual ? "\n" : "") + pagina.text;
+    loteActual += (loteActual ? "\n" : "") + texto;
   }
   if (loteActual) lotes.push(loteActual);
 
@@ -139,17 +142,17 @@ export async function leerEntradasPadronPdf(
   pdfBuffer: Buffer,
   onProgreso?: (progreso: ProgresoLectura) => void,
 ): Promise<EntradaExtraidaPdf[]> {
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: pdfBuffer });
-  const resultado = await parser.getText();
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  const documento = await getDocumentProxy(new Uint8Array(pdfBuffer));
+  const { text: textoPorPagina } = await extractText(documento, { mergePages: false });
 
-  const totalCaracteres = resultado.pages.reduce((acc, p) => acc + p.text.trim().length, 0);
-  const promedioCaracteresPorPagina = totalCaracteres / Math.max(1, resultado.pages.length);
+  const totalCaracteres = textoPorPagina.reduce((acc, t) => acc + t.trim().length, 0);
+  const promedioCaracteresPorPagina = totalCaracteres / Math.max(1, textoPorPagina.length);
   if (promedioCaracteresPorPagina < 20) {
     throw new PdfSinTextoSeleccionableError();
   }
 
-  const lotes = agruparEnLotes(resultado.pages);
+  const lotes = agruparEnLotes(textoPorPagina);
   const todasLasEntradas: EntradaExtraidaPdf[] = [];
 
   for (let i = 0; i < lotes.length; i++) {

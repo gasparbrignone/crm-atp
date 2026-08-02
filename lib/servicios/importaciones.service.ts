@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { personaFormSchema } from "@/lib/validaciones/persona.validation";
+import { resolverCarreraSemantica } from "@/lib/ia/normalizacion";
 import type { CampoPersonaImportable } from "@/lib/utils/csv-mapping";
 
 interface ProcesarImportacionCsvInput {
@@ -68,8 +69,12 @@ export async function procesarImportacionPersonasCsv({
 
     const columnaCarrera = Object.entries(mapeo).find(([, c]) => c === "carreraTexto")?.[0];
     const carreraTexto = columnaCarrera ? fila[columnaCarrera]?.trim() : undefined;
+    // Matching semántico (/15-ia.md sección 3): primero exacto (gratis), y
+    // solo si no hay coincidencia exacta se recurre a la IA para resolver
+    // variantes de escritura ("Enfermeria", "Lic. en Enfermería", "ENF").
     const carreraId = carreraTexto
-      ? carreraPorNombre.get(carreraTexto.toLowerCase())
+      ? (carreraPorNombre.get(carreraTexto.toLowerCase()) ??
+        (await resolverCarreraSemantica(carreraTexto)))
       : undefined;
 
     const parsed = personaFormSchema.safeParse(datosMapeados);

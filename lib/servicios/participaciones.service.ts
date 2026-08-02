@@ -4,6 +4,12 @@ import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buscarPersonaCoincidente, obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
+import {
+  normalizarNombrePropio,
+  normalizarTelefono,
+  normalizarEmail,
+} from "@/lib/ia/normalizacion";
+import { revincularPersonaNuevaConPadronesPendientes } from "@/lib/servicios/padron.service";
 import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
 import { partirNombreYApellido } from "@/lib/utils/nombre-padron";
 
@@ -390,6 +396,14 @@ export async function importarParticipacionesCsv({
       continue;
     }
 
+    // Normalización (/15-ia.md sección 3) antes de comparar contra la base
+    // existente, para que el matching de duplicados compare siempre contra
+    // el mismo formato.
+    datos.nombre = normalizarNombrePropio(datos.nombre);
+    datos.apellido = normalizarNombrePropio(datos.apellido);
+    if (datos.telefono) datos.telefono = normalizarTelefono(datos.telefono);
+    if (datos.email) datos.email = normalizarEmail(datos.email);
+
     try {
       const resultado = await buscarPersonaCoincidente(
         {
@@ -440,6 +454,9 @@ export async function importarParticipacionesCsv({
           usuarioId,
           metadata: { origen: "importacion_inscriptos", actividadId },
         });
+        if (nueva.dni) {
+          await revincularPersonaNuevaConPadronesPendientes(nueva.id, nueva.dni);
+        }
         personaId = nueva.id;
         altasNuevas++;
       } else {

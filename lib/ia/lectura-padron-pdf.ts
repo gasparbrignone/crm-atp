@@ -1,22 +1,58 @@
-import { PDFDocument } from "pdf-lib";
-import { obtenerClienteAnthropic, MODELO_IA_DOCUMENTOS } from "@/lib/ia/cliente-anthropic";
+import { PDFParse } from "pdf-parse";
+import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
 
 // Lectura automática de padrones en PDF — /15-ia.md sección 4 y
-// /09-modulo-padron-electoral.md sección 4. En lugar de OCR + parsing con
-// reglas rígidas, se usa la lectura nativa de documentos de Claude
-// directamente sobre el PDF (tablas con alineación irregular, encabezados
-// repetidos, páginas escaneadas como imagen). Se procesa en lotes de páginas
-// (sección 10 de /15-ia.md: "no como una única llamada bloqueante sobre un
-// documento completo"), tanto para acotar el tamaño de cada request como
-// para que un error de lectura en un lote no arruine el documento entero.
+// /09-modulo-padron-electoral.md sección 4. Los padrones que carga ATP son
+// siempre PDF con texto seleccionable (nunca escaneados/foto — confirmado
+// con Gaspar, 2026-08-02), así que en vez de mandarle a la IA una imagen de
+// cada página (caro, y con el volumen de un padrón real se corta la
+// respuesta a mitad de camino — bug real detectado el mismo día, ver
+// CLAUDE.md), se extrae el texto seleccionable directo del PDF con pdf-parse
+// y se le pasa como texto a la IA solo para estructurarlo en filas — mucho
+// más barato, más rápido, y sin el riesgo de truncamiento de la lectura por
+// imagen.
 
-const PAGINAS_POR_LOTE = 12;
+// ~90 filas de padrón por lote (a ~65 caracteres por fila) — deja margen
+// generoso para que la respuesta en JSON nunca se acerque al límite de
+// salida, evitando el bug de truncamiento silencioso ya sufrido con lotes
+// más grandes.
+const CARACTERES_POR_LOTE = 6000;
+const MAX_TOKENS_LECTURA = 8192;
 
 export interface EntradaExtraidaPdf {
   dni: string | null;
   nombreCompleto: string;
   carrera: string | null;
   confianzaExtraccion: number;
+}
+
+export class LecturaPdfTruncadaError extends Error {
+  constructor(public lote: number) {
+    super(
+      `La IA no terminó de leer el lote ${lote} del padrón (la respuesta se cortó por longitud). Reintentá.`,
+    );
+    this.name = "LecturaPdfTruncadaError";
+  }
+}
+
+export class LecturaPdfSinFormatoError extends Error {
+  constructor(public lote: number) {
+    super(`No se pudo interpretar la respuesta de la IA para el lote ${lote} del padrón.`);
+    this.name = "LecturaPdfSinFormatoError";
+  }
+}
+
+// El PDF no tiene texto seleccionable (ej. escaneado como imagen) — este
+// lector no hace OCR/lectura de imagen (ver nota arriba). Falla explícito en
+// vez de devolver silenciosamente 0 entradas, mismo espíritu que el resto de
+// los errores de este archivo.
+export class PdfSinTextoSeleccionableError extends Error {
+  constructor() {
+    super(
+      "Este PDF no tiene texto seleccionable (parece un escaneo o imagen). Este importador solo lee PDFs con texto seleccionable.",
+    );
+    this.name = "PdfSinTextoSeleccionableError";
+  }
 }
 
 function extraerJson(texto: string): unknown {
@@ -29,42 +65,63 @@ function extraerJson(texto: string): unknown {
   }
 }
 
-async function leerLotePaginas(pdfBytes: Uint8Array): Promise<EntradaExtraidaPdf[]> {
-  const base64 = Buffer.from(pdfBytes).toString("base64");
+// Agrupa el texto por página en lotes de hasta CARACTERES_POR_LOTE, sin
+// cortar una página a la mitad (una fila de padrón nunca cruza una página).
+function agruparEnLotes(paginas: { text: string; num: number }[]): string[] {
+  const lotes: string[] = [];
+  let loteActual = "";
+
+  for (const pagina of paginas) {
+    if (loteActual && loteActual.length + pagina.text.length > CARACTERES_POR_LOTE) {
+      lotes.push(loteActual);
+      loteActual = "";
+    }
+    loteActual += (loteActual ? "\n" : "") + pagina.text;
+  }
+  if (loteActual) lotes.push(loteActual);
+
+  return lotes;
+}
+
+async function leerLoteTexto(texto: string, numeroLote: number): Promise<EntradaExtraidaPdf[]> {
   const cliente = obtenerClienteAnthropic();
 
   const respuesta = await cliente.messages.create({
-    model: MODELO_IA_DOCUMENTOS,
-    max_tokens: 4096,
+    model: MODELO_IA_LIVIANO,
+    max_tokens: MAX_TOKENS_LECTURA,
     messages: [
       {
         role: "user",
-        content: [
-          {
-            type: "document",
-            source: { type: "base64", media_type: "application/pdf", data: base64 },
-          },
-          {
-            type: "text",
-            text: `Este es un padrón electoral universitario (listado de personas habilitadas para votar). Extraé cada fila de persona que aparezca en estas páginas.
+        content: `Este es texto extraído de un padrón electoral universitario (listado de personas habilitadas para votar), tal como aparece en el PDF original — el orden de lectura por columna puede venir levemente desordenado.
 
-Para cada persona extraé: DNI (o null si no es legible/no está), nombre completo tal como figura en el original, carrera (si el documento la incluye, si no null), y un puntaje de confianza de extracción entre 0 y 1 — qué tan segura estás de haber leído bien ESA fila puntual (bajá el puntaje ante texto borroso, tachaduras, superposición, o cualquier ambigüedad de lectura). Esto es un puntaje de qué tan bien leíste el dato, no de si la persona existe en otro lado.
+Texto:
+${texto}
 
-No inventes filas que no estén en el documento. Si una página no tiene datos de personas (portada, índice), no generes entradas para ella.
+Extraé cada fila de persona. Para cada una: DNI (o null si no está o no es legible), nombre completo tal como figura en el original, carrera (si el texto la incluye, si no null), y un puntaje de confianza de extracción entre 0 y 1 — qué tan segura estás de haber separado bien esa fila puntual (bajá el puntaje si el texto parece mezclado entre columnas o filas). No inventes filas que no estén en el texto.
 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"entradas": [{"dni": "<dni o null>", "nombreCompleto": "<nombre tal como figura>", "carrera": "<carrera o null>", "confianzaExtraccion": <0 a 1>}]}`,
-          },
-        ],
       },
     ],
   });
 
+  // Cortada por longitud: NO tratar como "sin entradas" — eso es
+  // indistinguible de un lote realmente vacío y llevó al bug real
+  // documentado arriba. Mejor fallar fuerte y dejar que el usuario reintente.
+  if (respuesta.stop_reason === "max_tokens") {
+    throw new LecturaPdfTruncadaError(numeroLote);
+  }
+
   const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") return [];
+  if (!bloqueTexto || bloqueTexto.type !== "text") {
+    throw new LecturaPdfSinFormatoError(numeroLote);
+  }
 
   const json = extraerJson(bloqueTexto.text) as { entradas?: EntradaExtraidaPdf[] } | null;
-  return json?.entradas ?? [];
+  if (!json || !Array.isArray(json.entradas)) {
+    throw new LecturaPdfSinFormatoError(numeroLote);
+  }
+  return json.entradas;
 }
 
 export interface ProgresoLectura {
@@ -72,34 +129,26 @@ export interface ProgresoLectura {
   totalLotes: number;
 }
 
-// Divide el PDF en lotes de páginas (pdf-lib, sin dependencias nativas) y
-// procesa cada lote como un documento independiente. `onProgreso` permite a
-// quien llama reportar avance (ej. loguear o actualizar un contador) mientras
-// dura el procesamiento, ya que un padrón real puede tener muchas páginas.
 export async function leerEntradasPadronPdf(
   pdfBuffer: Buffer,
   onProgreso?: (progreso: ProgresoLectura) => void,
 ): Promise<EntradaExtraidaPdf[]> {
-  const documentoOriginal = await PDFDocument.load(pdfBuffer);
-  const totalPaginas = documentoOriginal.getPageCount();
-  const totalLotes = Math.ceil(totalPaginas / PAGINAS_POR_LOTE);
+  const parser = new PDFParse({ data: pdfBuffer });
+  const resultado = await parser.getText();
 
+  const totalCaracteres = resultado.pages.reduce((acc, p) => acc + p.text.trim().length, 0);
+  const promedioCaracteresPorPagina = totalCaracteres / Math.max(1, resultado.pages.length);
+  if (promedioCaracteresPorPagina < 20) {
+    throw new PdfSinTextoSeleccionableError();
+  }
+
+  const lotes = agruparEnLotes(resultado.pages);
   const todasLasEntradas: EntradaExtraidaPdf[] = [];
 
-  for (let lote = 0; lote < totalLotes; lote++) {
-    const inicio = lote * PAGINAS_POR_LOTE;
-    const fin = Math.min(inicio + PAGINAS_POR_LOTE, totalPaginas);
-
-    const documentoLote = await PDFDocument.create();
-    const indices = Array.from({ length: fin - inicio }, (_, i) => inicio + i);
-    const paginas = await documentoLote.copyPages(documentoOriginal, indices);
-    for (const pagina of paginas) documentoLote.addPage(pagina);
-
-    const bytesLote = await documentoLote.save();
-    const entradasLote = await leerLotePaginas(bytesLote);
+  for (let i = 0; i < lotes.length; i++) {
+    const entradasLote = await leerLoteTexto(lotes[i], i + 1);
     todasLasEntradas.push(...entradasLote);
-
-    onProgreso?.({ loteActual: lote + 1, totalLotes });
+    onProgreso?.({ loteActual: i + 1, totalLotes: lotes.length });
   }
 
   return todasLasEntradas;

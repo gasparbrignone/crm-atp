@@ -1,6 +1,12 @@
 import { Prisma, type Persona } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import { revincularPersonaNuevaConPadronesPendientes } from "@/lib/servicios/padron.service";
+import {
+  normalizarNombrePropio,
+  normalizarTelefono,
+  normalizarEmail,
+} from "@/lib/ia/normalizacion";
 import type { PersonaFormValues } from "@/lib/validaciones/persona.validation";
 
 export class DniDuplicadoError extends Error {
@@ -94,11 +100,21 @@ export async function crearPersona(datos: PersonaFormValues, usuarioId: string) 
     if (existente) throw new DniDuplicadoError(existente);
   }
 
+  // Normalización defensiva (/15-ia.md sección 3): personaFormSchema ya
+  // normaliza cuando el llamador viene del formulario/CSV, pero algunos
+  // callers (ej. alta desde punteo) arman PersonaFormValues a mano sin pasar
+  // por el schema — se repite acá para garantizar el mismo resultado sin
+  // importar la vía de entrada. Idempotente, no rompe si ya venía normalizado.
+  const nombre = normalizarNombrePropio(datos.nombre);
+  const apellido = normalizarNombrePropio(datos.apellido);
+  const telefono = datos.telefono ? normalizarTelefono(datos.telefono) : undefined;
+  const email = datos.email ? normalizarEmail(datos.email) : undefined;
+
   const persona = await prisma.$transaction(async (tx) => {
     const creada = await tx.persona.create({
       data: {
-        nombre: datos.nombre,
-        apellido: datos.apellido,
+        nombre,
+        apellido,
         dni: datos.dni ?? null,
         legajo: datos.legajo ?? null,
         carreraId: datos.carreraId ?? null,
@@ -108,10 +124,8 @@ export async function crearPersona(datos: PersonaFormValues, usuarioId: string) 
         creadoPorId: usuarioId,
         modificadoPorId: usuarioId,
         // RN-3: el primer teléfono/email cargado es el principal por defecto.
-        telefonos: datos.telefono
-          ? { create: [{ numero: datos.telefono, esPrincipal: true }] }
-          : undefined,
-        emails: datos.email ? { create: [{ email: datos.email, esPrincipal: true }] } : undefined,
+        telefonos: telefono ? { create: [{ numero: telefono, esPrincipal: true }] } : undefined,
+        emails: email ? { create: [{ email, esPrincipal: true }] } : undefined,
       },
     });
     return creada;
@@ -123,6 +137,10 @@ export async function crearPersona(datos: PersonaFormValues, usuarioId: string) 
     accion: "crear",
     usuarioId,
   });
+
+  if (persona.dni) {
+    await revincularPersonaNuevaConPadronesPendientes(persona.id, persona.dni);
+  }
 
   return persona;
 }

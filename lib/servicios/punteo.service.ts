@@ -97,6 +97,7 @@ export async function crearPersonaDesdePunteo(datos: DatosPersonaMinimos, usuari
       nombre: datos.nombre,
       apellido: datos.apellido,
       telefono: datos.telefono || undefined,
+      email: undefined,
       dni: undefined,
       legajo: undefined,
       carreraId: undefined,

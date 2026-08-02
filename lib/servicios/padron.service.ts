@@ -30,6 +30,18 @@ export class PadronPendientesSinResolverError extends Error {
   }
 }
 
+// Bug real detectado 2026-08-02: un padrón cuya lectura de PDF falló
+// silenciosamente (0 entradas extraídas) se pudo activar igual, porque
+// "pendientes === 0" también es cierto cuando no hay absolutamente ninguna
+// entrada. Eso marcó a toda la base como "no encontrado en padrón". Un
+// padrón con 0 entradas nunca es un estado válido para activar.
+export class PadronVacioError extends Error {
+  constructor() {
+    super("Este padrón no tiene ninguna entrada cargada. No se puede activar así.");
+    this.name = "PadronVacioError";
+  }
+}
+
 export async function listarPadrones() {
   return prisma.padronElectoral.findMany({
     orderBy: { fechaCarga: "desc" },
@@ -436,6 +448,7 @@ export async function crearPersonaDesdeEntradaPadron(
 // activación puntual.
 export async function activarPadron(padronId: string, usuarioId: string) {
   const resumen = await obtenerResumenPadron(padronId);
+  if (resumen.total === 0) throw new PadronVacioError();
   if (resumen.pendiente > 0) throw new PadronPendientesSinResolverError(resumen.pendiente);
 
   const padronAActivar = await prisma.padronElectoral.findUniqueOrThrow({
@@ -513,6 +526,46 @@ export async function cerrarPadron(padronId: string, usuarioId: string) {
   });
 
   return prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
+}
+
+// Re-chequeo automático: si una Persona recién creada tiene DNI y hay
+// entradas "sin_coincidencia" en algún padrón ya cargado con ese mismo DNI
+// (ej. alguien que figuraba en el padrón oficial pero todavía no estaba en
+// la base, y se suma después vía una Actividad, alta manual o punteo), se
+// vincula sola — el DNI es señal determinística (RN-1), no hace falta
+// revisión humana acá. Si el padrón de esa entrada está activo, además
+// habilita el estado de padrón correspondiente (CD o CE) para esta Persona,
+// que de otro modo quedaría en "no_evaluado" al no haber existido todavía
+// cuando se activó ese padrón. Pedido de Gaspar, 2026-08-02.
+export async function revincularPersonaNuevaConPadronesPendientes(personaId: string, dni: string) {
+  const entradasPendientes = await prisma.padronEntrada.findMany({
+    where: { dni, personaId: null, estadoMatching: "sin_coincidencia" },
+    include: { padronElectoral: true },
+  });
+
+  for (const entrada of entradasPendientes) {
+    await prisma.padronEntrada.update({
+      where: { id: entrada.id },
+      data: { personaId, estadoMatching: "vinculado_automatico", confianzaMatching: 1 },
+    });
+    await registrarCambio({
+      entidad: "PadronEntrada",
+      entidadId: entrada.id,
+      accion: "editar",
+      usuarioId: null,
+      campo: "personaId",
+      valorNuevo: personaId,
+      metadata: { proceso: "revinculacion_automatica_dni", personaId },
+    });
+
+    if (entrada.padronElectoral.estado === "activo") {
+      const campoEstado = CAMPO_ESTADO_PADRON_POR_TIPO[entrada.padronElectoral.tipo];
+      await prisma.persona.update({
+        where: { id: personaId },
+        data: { [campoEstado]: "en_padron_habilitado" },
+      });
+    }
+  }
 }
 
 export async function buscarPersonasParaVincular(query: string) {

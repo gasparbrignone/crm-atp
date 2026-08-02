@@ -8,6 +8,31 @@ import { prepararLotesPadronPdf, leerLotePadronPdf } from "@/lib/ia/lectura-padr
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 import type { Prisma, TipoPadronElectoral } from "@prisma/client";
 
+// Tope duro de tiempo para un lote de padrón: los reintentos internos por
+// cuota (cliente-ia.ts) y por respuesta mal formada (lectura-padron-pdf.ts)
+// están acotados, pero encadenados podrían en teoría seguir sumando cerca
+// del límite real de duración de función de Vercel (300s en el plan
+// gratuito) — bug real 2026-08-02: dos lotes seguidos murieron con "Task
+// timed out after 300 seconds" sin llegar a devolver un error entendible.
+// Se corta acá bastante antes de esa pared, con un mensaje claro, para que
+// el cliente reintente con una invocación nueva (con su propio presupuesto
+// de tiempo) en vez de perder el intento entero en un timeout duro.
+export class TiempoLoteAgotadoError extends Error {
+  constructor() {
+    super(
+      "Este lote está tardando demasiado, probablemente por contención en la cuota gratuita de la IA. No se perdió nada de lo ya procesado — reintentá.",
+    );
+    this.name = "TiempoLoteAgotadoError";
+  }
+}
+
+function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promesa,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new TiempoLoteAgotadoError()), ms)),
+  ]);
+}
+
 // Padrón electoral — /09-modulo-padron-electoral.md. ATP maneja dos padrones
 // oficiales distintos y activos en simultáneo durante una elección: Consejo
 // Directivo (CD, más restrictivo) y Centro de Estudiantes (CE, más amplio,
@@ -434,7 +459,7 @@ export async function procesarSiguienteLotePadron(
 
   const lotes = await prepararLotesPadronPdf(pdfBuffer);
   const indiceLote = padron.lotesProcesados;
-  const entradasDelLote = await leerLotePadronPdf(lotes, indiceLote);
+  const entradasDelLote = await conLimiteDeTiempo(leerLotePadronPdf(lotes, indiceLote), 160_000);
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
   const filasParaProcesar: FilaPadronParaProcesar[] = entradasDelLote.map((entrada, i) => ({
@@ -445,11 +470,14 @@ export async function procesarSiguienteLotePadron(
     confianzaExtraccion: entrada.confianzaExtraccion,
   }));
 
-  const resultadoLote = await procesarFilasPadronEnParalelo(
-    padronId,
-    filasParaProcesar,
-    umbral,
-    "La IA no pudo leer DNI o nombre en esta fila del documento.",
+  const resultadoLote = await conLimiteDeTiempo(
+    procesarFilasPadronEnParalelo(
+      padronId,
+      filasParaProcesar,
+      umbral,
+      "La IA no pudo leer DNI o nombre en esta fila del documento.",
+    ),
+    100_000,
   );
 
   const lotesProcesados = indiceLote + 1;

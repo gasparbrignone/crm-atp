@@ -80,9 +80,19 @@ function segundosDeEsperaSugeridos(error: unknown): number | null {
   return match ? Number(match[1]) : null;
 }
 
+// Tope duro por espera de reintento: el mensaje de error puede sugerir
+// esperar mucho más que esto (medido: hasta 56s reales) — pero encadenado
+// con varios intentos y con la espera de esperarCupo(), eso puede sumar más
+// de los 300s reales de duración de función de Vercel y morir sin ni
+// siquiera terminar de reintentar (bug real 2026-08-02: dos lotes seguidos
+// agotaron exactamente 300s). Mejor esperar menos y fallar rápido, dejando
+// que quien llama (el cliente, reintentando el mismo lote) tenga una
+// invocación nueva con su propio presupuesto de tiempo entero.
+const TOPE_ESPERA_REINTENTO_MS = 20_000;
+
 export async function generarConReintentos<T>(
   llamada: () => Promise<T>,
-  intentos = 4,
+  intentos = 3,
 ): Promise<T> {
   let ultimoError: unknown;
   for (let intento = 0; intento < intentos; intento++) {
@@ -94,7 +104,8 @@ export async function generarConReintentos<T>(
       const reintentable = error instanceof ApiError && (error.status === 429 || error.status >= 500);
       if (!reintentable || intento === intentos - 1) throw error;
       const sugerido = segundosDeEsperaSugeridos(error);
-      await esperar(sugerido ? sugerido * 1000 + 500 : 1000 * 2 ** intento);
+      const espera = sugerido ? sugerido * 1000 + 500 : 1000 * 2 ** intento;
+      await esperar(Math.min(espera, TOPE_ESPERA_REINTENTO_MS));
     }
   }
   throw ultimoError;

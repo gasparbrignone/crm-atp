@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { requerirPermiso } from "@/lib/permisos/permisos";
-import { importarEntradasPadronCsv, importarEntradasPadronPdf } from "@/lib/servicios/padron.service";
+import {
+  importarEntradasPadronCsv,
+  iniciarImportacionPadronPdf,
+  procesarSiguienteLotePadron,
+  type ResultadoLotePadron,
+} from "@/lib/servicios/padron.service";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 
 export async function importarEntradasPadronCsvAction(
@@ -27,22 +32,30 @@ export async function importarEntradasPadronCsvAction(
   return resultado;
 }
 
-export async function importarEntradasPadronPdfAction(
+// Primer paso: sube el PDF y calcula en cuántos lotes se va a leer. No llama
+// a la IA todavía — ver nota en padron.service.ts sobre por qué esto se
+// separó de la lectura en sí.
+export async function iniciarImportacionPadronPdfAction(
   padronId: string,
   nombreArchivo: string,
   pdfBase64: string,
-) {
+): Promise<{ totalLotes: number }> {
   const usuario = await requerirPermiso("padron.importar");
+  return iniciarImportacionPadronPdf({ padronId, usuarioId: usuario.id, nombreArchivo, pdfBase64 });
+}
 
-  const resultado = await importarEntradasPadronPdf({
-    padronId,
-    usuarioId: usuario.id,
-    nombreArchivo,
-    pdfBase64,
-  });
+// Segundo paso, llamado repetidas veces por el cliente hasta `completado`:
+// procesa el siguiente lote todavía no leído.
+export async function procesarSiguienteLotePadronAction(
+  padronId: string,
+): Promise<ResultadoLotePadron> {
+  const usuario = await requerirPermiso("padron.importar");
+  const resultado = await procesarSiguienteLotePadron(padronId, usuario.id);
 
-  revalidatePath(`/padron/${padronId}`);
-  revalidatePath("/padron");
+  if (resultado.completado) {
+    revalidatePath(`/padron/${padronId}`);
+    revalidatePath("/padron");
+  }
 
   return resultado;
 }

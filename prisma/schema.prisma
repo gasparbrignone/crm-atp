@@ -469,6 +469,14 @@ model PadronElectoral {
   cargadoPorId    String?
   cargadoPor      Usuario?              @relation("PadronElectoralCargadoPor", fields: [cargadoPorId], references: [id])
 
+  // Progreso de importación de PDF por lotes — /15-ia.md sección 8: la cuota
+  // gratuita de Gemini (15 req/min) obliga a procesar el PDF en varios
+  // requests cortos en vez de uno solo que podría tardar varios minutos y
+  // superar el límite de duración del plan gratuito de Vercel. `null` en
+  // ambos campos significa "sin una importación de PDF en curso".
+  lotesTotales    Int?
+  lotesProcesados Int                   @default(0)
+
   entradas PadronEntrada[]
 
   @@index([estado])

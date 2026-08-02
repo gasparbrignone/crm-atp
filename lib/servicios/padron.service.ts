@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
-import { leerEntradasPadronPdf } from "@/lib/ia/lectura-padron-pdf";
+import { prepararLotesPadronPdf, leerLotePadronPdf } from "@/lib/ia/lectura-padron-pdf";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 import type { Prisma, TipoPadronElectoral } from "@prisma/client";
 
@@ -338,7 +338,7 @@ export async function importarEntradasPadronCsv({
   return resultado;
 }
 
-interface ImportarEntradasPadronPdfInput {
+interface IniciarImportacionPadronPdfInput {
   padronId: string;
   usuarioId: string;
   nombreArchivo: string;
@@ -348,15 +348,23 @@ interface ImportarEntradasPadronPdfInput {
 // Carga de un padrón directamente desde el PDF oficial —
 // /09-modulo-padron-electoral.md sección 4 y /15-ia.md sección 4: caso
 // principal de este módulo, dado que los padrones universitarios rara vez
-// llegan como planilla. Cada fila extraída con confianza de lectura baja
-// queda `pendiente` para revisión visual, nunca se incorpora silenciosamente
-// con un posible error de lectura (/15-ia.md sección 4.2).
-export async function importarEntradasPadronPdf({
+// llegan como planilla.
+//
+// Se procesa en dos etapas (iniciar + procesar lote por lote) en vez de una
+// sola llamada, porque el plan real de este proyecto es el gratuito de
+// Vercel (Hobby — nunca se paga por infraestructura, decisión explícita de
+// Gaspar 2026-08-02) y la cuota gratuita de Gemini (15 requests/min, ver
+// /15-ia.md sección 8) hace que leer un padrón real de decenas de páginas
+// pueda tardar varios minutos — mucho más que cualquier límite de duración
+// de función del plan gratuito. Subir el PDF y calcular los lotes es rápido
+// (no llama a la IA) y deja el padrón listo para que el cliente vaya
+// pidiendo lotes de a uno.
+export async function iniciarImportacionPadronPdf({
   padronId,
   usuarioId,
   nombreArchivo,
   pdfBase64,
-}: ImportarEntradasPadronPdfInput) {
+}: IniciarImportacionPadronPdfInput): Promise<{ totalLotes: number }> {
   const pdfBuffer = Buffer.from(pdfBase64, "base64");
 
   const rutaArchivo = `${usuarioId}/${Date.now()}-${nombreArchivo}`;
@@ -364,47 +372,111 @@ export async function importarEntradasPadronPdf({
   const { error: errorSubida } = await admin.storage
     .from("importaciones")
     .upload(rutaArchivo, pdfBuffer, { contentType: "application/pdf" });
+  if (errorSubida) {
+    throw new Error("No se pudo subir el PDF a almacenamiento. Probá de nuevo.");
+  }
 
-  const entradasExtraidas = await leerEntradasPadronPdf(pdfBuffer);
+  const lotes = await prepararLotesPadronPdf(pdfBuffer);
+
+  await prisma.padronElectoral.update({
+    where: { id: padronId },
+    data: { archivoOrigenId: rutaArchivo, lotesTotales: lotes.length, lotesProcesados: 0 },
+  });
+
+  return { totalLotes: lotes.length };
+}
+
+export interface ResultadoLotePadron {
+  completado: boolean;
+  lotesProcesados: number;
+  lotesTotales: number;
+  procesadasEnEsteLote: number;
+  omitidasEnEsteLote: number;
+  filasOmitidasEnEsteLote: { numeroFila: number; motivo: string }[];
+}
+
+// Procesa exactamente el siguiente lote sin leer del PDF que no haya sido
+// procesado todavía — pensado para que el cliente lo llame repetidas veces
+// hasta `completado: true`, mostrando progreso, sin depender de que una sola
+// función serverless aguante los varios minutos que puede tardar el padrón
+// completo. Cada fila extraída con confianza de lectura baja queda
+// `pendiente` para revisión visual, nunca se incorpora silenciosamente con
+// un posible error de lectura (/15-ia.md sección 4.2).
+export async function procesarSiguienteLotePadron(
+  padronId: string,
+  usuarioId: string,
+): Promise<ResultadoLotePadron> {
+  const padron = await prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
+
+  if (!padron.archivoOrigenId || padron.lotesTotales == null) {
+    throw new Error("Este padrón no tiene una importación de PDF iniciada.");
+  }
+
+  if (padron.lotesProcesados >= padron.lotesTotales) {
+    return {
+      completado: true,
+      lotesProcesados: padron.lotesProcesados,
+      lotesTotales: padron.lotesTotales,
+      procesadasEnEsteLote: 0,
+      omitidasEnEsteLote: 0,
+      filasOmitidasEnEsteLote: [],
+    };
+  }
+
+  const admin = createAdminClient();
+  const { data, error: errorDescarga } = await admin.storage
+    .from("importaciones")
+    .download(padron.archivoOrigenId);
+  if (errorDescarga || !data) {
+    throw new Error("No se pudo leer el PDF ya subido. Probá de nuevo.");
+  }
+  const pdfBuffer = Buffer.from(await data.arrayBuffer());
+
+  const lotes = await prepararLotesPadronPdf(pdfBuffer);
+  const indiceLote = padron.lotesProcesados;
+  const entradasDelLote = await leerLotePadronPdf(lotes, indiceLote);
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
-
-  const filasParaProcesar: FilaPadronParaProcesar[] = entradasExtraidas.map((entrada, i) => ({
-    numeroFila: i + 1,
+  const filasParaProcesar: FilaPadronParaProcesar[] = entradasDelLote.map((entrada, i) => ({
+    numeroFila: indiceLote * 1000 + i + 1,
     dni: entrada.dni ?? undefined,
     nombreCompletoOriginal: entrada.nombreCompleto,
     carreraTextoOriginal: entrada.carrera,
     confianzaExtraccion: entrada.confianzaExtraccion,
   }));
 
-  const resultado = await procesarFilasPadronEnParalelo(
+  const resultadoLote = await procesarFilasPadronEnParalelo(
     padronId,
     filasParaProcesar,
     umbral,
     "La IA no pudo leer DNI o nombre en esta fila del documento.",
   );
 
-  if (!errorSubida) {
-    await prisma.padronElectoral.update({
-      where: { id: padronId },
-      data: { archivoOrigenId: rutaArchivo },
+  const lotesProcesados = indiceLote + 1;
+  await prisma.padronElectoral.update({
+    where: { id: padronId },
+    data: { lotesProcesados },
+  });
+
+  const completado = lotesProcesados >= padron.lotesTotales;
+  if (completado) {
+    await registrarCambio({
+      entidad: "PadronElectoral",
+      entidadId: padronId,
+      accion: "importar",
+      usuarioId,
+      metadata: { origen: "pdf", lotesTotales: padron.lotesTotales },
     });
   }
 
-  await registrarCambio({
-    entidad: "PadronElectoral",
-    entidadId: padronId,
-    accion: "importar",
-    usuarioId,
-    metadata: {
-      procesadas: resultado.procesadas,
-      omitidas: resultado.omitidas,
-      totalFilas: entradasExtraidas.length,
-      origen: "pdf",
-    },
-  });
-
-  return resultado;
+  return {
+    completado,
+    lotesProcesados,
+    lotesTotales: padron.lotesTotales,
+    procesadasEnEsteLote: resultadoLote.procesadas,
+    omitidasEnEsteLote: resultadoLote.omitidas,
+    filasOmitidasEnEsteLote: resultadoLote.filasOmitidas,
+  };
 }
 
 export async function vincularEntradaManualmente(

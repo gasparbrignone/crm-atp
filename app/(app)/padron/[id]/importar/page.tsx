@@ -4,10 +4,19 @@ import { obtenerPadron } from "@/lib/servicios/padron.service";
 import { Card } from "@/components/ui/Card";
 import { SelectorFuenteImportacion } from "./SelectorFuenteImportacion";
 
-// El procesamiento de PDF llama a la IA en lotes de páginas y puede tardar
-// varios minutos en documentos grandes (/15-ia.md sección 10) — ver nota en
-// PROMPT-CONTINUAR.md sobre el límite real dependiendo del plan de Vercel.
-export const maxDuration = 300;
+// El procesamiento de PDF ahora se hace lote por lote (ver
+// procesarSiguienteLotePadronAction), un request de servidor por lote, en
+// vez de una sola llamada — la lectura completa de un padrón real puede
+// tardar varios minutos contra la cuota gratuita de Gemini (15 req/min, ver
+// /15-ia.md sección 8), mucho más de lo que aguanta cualquier función
+// serverless. Este proyecto usa el plan gratuito de Vercel (Hobby — nunca se
+// paga por infraestructura, decisión explícita de Gaspar 2026-08-02), así
+// que esta duración se deja conservadora: cada lote individual debería
+// resolverse bien por debajo de esto. Si un lote puntual se pasa igual (un
+// reintento largo por cuota), el cliente simplemente reintenta ese mismo
+// lote — no se pierde progreso porque cada lote se cuenta como procesado
+// recién cuando termina con éxito.
+export const maxDuration = 60;
 
 export default async function ImportarPadronPage({
   params,

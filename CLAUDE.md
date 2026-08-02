@@ -183,3 +183,5 @@ npx prisma studio        # explorar datos en desarrollo
 ## 10. Entornos
 
 Desarrollo local y Preview (Vercel) nunca se conectan a la base de producción, ni siquiera en solo lectura. Producción es únicamente la rama `main`, con backups activos (`16-seguridad.md`). Detalle en `03-arquitectura.md` sección 9.
+
+**Plan de Vercel: siempre el gratuito (Hobby)** — decisión explícita de Gaspar (2026-08-02): este proyecto no paga por infraestructura. No asumir que hay margen de duración de función más allá de lo que permite el plan gratuito (bug real: se asumió por error que el proyecto estaba en plan Pro con funciones de hasta 800s, cuando en realidad corre en Hobby). Cualquier tarea que pueda tardar más que ese límite (como la lectura de padrones por IA, ver `15-ia.md` sección 8) tiene que diseñarse como procesamiento incremental en pasos cortos, no como una sola función de larga duración.

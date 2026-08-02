@@ -116,10 +116,24 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
   if (!json || typeof json.confianza !== "number") {
     return { tipo: "pendiente", motivo: "No se pudo interpretar la respuesta de la IA.", candidatos };
   }
-  if (!json.personaId || !candidatos.some((c) => c.id === json.personaId)) {
+  // La IA está segura de que ninguno de los candidatos (encontrados por
+  // coincidencia difusa de tokens del nombre) es la misma persona — según
+  // /09-modulo-padron-electoral.md sección 5, eso es "sin_coincidencia", no
+  // "pendiente": `pendiente` es para cuando SÍ hay un candidato pero la
+  // confianza queda por debajo del umbral, no para descartes seguros. Tratar
+  // esto como pendiente generaba decenas de revisiones sin sentido por cada
+  // coincidencia espuria de un token corto y común (ej. "Luis" dentro de
+  // "Luisina") — bug real 2026-08-02, visto en producción.
+  if (!json.personaId) {
+    return { tipo: "sin_coincidencia" };
+  }
+  if (!candidatos.some((c) => c.id === json.personaId)) {
+    // La IA devolvió un id que no está entre los candidatos reales — no es
+    // un descarte seguro, algo salió raro en la respuesta, así que sí amerita
+    // ojo humano.
     return {
       tipo: "pendiente",
-      motivo: json.motivo ?? "Ningún candidato parecido es razonablemente la misma persona.",
+      motivo: json.motivo ?? "La IA devolvió una respuesta inconsistente para esta fila.",
       candidatos,
     };
   }

@@ -1,4 +1,9 @@
-import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
+import {
+  obtenerClienteIA,
+  MODELO_IA_LIVIANO,
+  SIN_PENSAMIENTO,
+  generarConReintentos,
+} from "@/lib/ia/cliente-ia";
 
 // Lectura automática de padrones en PDF — /15-ia.md sección 4 y
 // /09-modulo-padron-electoral.md sección 4. Los padrones que carga ATP son
@@ -114,13 +119,14 @@ async function leerLoteTexto(texto: string, numeroLote: number): Promise<Entrada
 Texto:
 ${texto}
 
-Extraé cada fila de persona. Para cada una: DNI (o null si no está o no es legible), nombre completo tal como figura en el original, carrera (si el texto la incluye, si no null), y un puntaje de confianza de extracción entre 0 y 1 — qué tan segura estás de haber separado bien esa fila puntual (bajá el puntaje si el texto parece mezclado entre columnas o filas). No inventes filas que no estén en el texto.
+Extraé cada fila de persona. Para cada una: DNI (o null si no está o no es legible), nombre completo tal como figura en el original, carrera (si el texto la incluye, si no null), y un puntaje de confianza de extracción entre 0 y 1 — qué tan segura estás de haber separado bien esa fila puntual (bajá el puntaje si el texto parece mezclado entre columnas o filas). No inventes filas que no estén en el texto. Copiá cada nombre letra por letra, exactamente como aparece en el texto — no agregues, dupliques ni corrijas ninguna letra.
 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"entradas": [{"dni": "<dni o null>", "nombreCompleto": "<nombre tal como figura>", "carrera": "<carrera o null>", "confianzaExtraccion": <0 a 1>}]}`,
       config: {
         maxOutputTokens: MAX_TOKENS_LECTURA,
         responseMimeType: "application/json",
+        thinkingConfig: SIN_PENSAMIENTO,
       },
     }),
   );

@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
+import {
+  obtenerClienteIA,
+  MODELO_IA_LIVIANO,
+  SIN_PENSAMIENTO,
+  generarConReintentos,
+} from "@/lib/ia/cliente-ia";
 
 // Matching de PadronEntrada contra Persona — /09-modulo-padron-electoral.md
 // sección 5: DNI exacto primero (señal determinística), después nombre
@@ -91,7 +96,11 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     cliente.models.generateContent({
       model: MODELO_IA_LIVIANO,
       contents: prompt,
-      config: { maxOutputTokens: 300, responseMimeType: "application/json" },
+      config: {
+        maxOutputTokens: 300,
+        responseMimeType: "application/json",
+        thinkingConfig: SIN_PENSAMIENTO,
+      },
     }),
   );
 

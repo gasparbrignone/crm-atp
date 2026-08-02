@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
+import {
+  obtenerClienteIA,
+  MODELO_IA_LIVIANO,
+  SIN_PENSAMIENTO,
+  generarConReintentos,
+} from "@/lib/ia/cliente-ia";
 
 // Normalización de datos — /15-ia.md sección 3. Se aplica automáticamente al
 // guardar, no como paso separado que el usuario deba disparar. La mayoría de
@@ -114,7 +119,11 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     cliente.models.generateContent({
       model: MODELO_IA_LIVIANO,
       contents: prompt,
-      config: { maxOutputTokens: 150, responseMimeType: "application/json" },
+      config: {
+        maxOutputTokens: 150,
+        responseMimeType: "application/json",
+        thinkingConfig: SIN_PENSAMIENTO,
+      },
     }),
   );
 

@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
+import {
+  obtenerClienteIA,
+  MODELO_IA_LIVIANO,
+  SIN_PENSAMIENTO,
+  generarConReintentos,
+} from "@/lib/ia/cliente-ia";
 
 // Detección de duplicados — /15-ia.md sección 2. Señales por orden de
 // confianza (sección 2.2): DNI/legajo idéntico (determinístico, no
@@ -162,7 +167,11 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     cliente.models.generateContent({
       model: MODELO_IA_LIVIANO,
       contents: prompt,
-      config: { maxOutputTokens: 300, responseMimeType: "application/json" },
+      config: {
+        maxOutputTokens: 300,
+        responseMimeType: "application/json",
+        thinkingConfig: SIN_PENSAMIENTO,
+      },
     }),
   );
 

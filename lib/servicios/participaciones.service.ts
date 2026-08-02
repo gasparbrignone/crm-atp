@@ -98,9 +98,14 @@ export async function buscarPersonasParaInscribir(actividadId: string, q: string
 // reactiva el registro existente en vez de duplicarlo. El cupo no bloquea la
 // inscripción: cuando se supera, la persona queda "excedente" (indicador
 // visual, no un estado nuevo — /07-modulo-participaciones.md sección 3.3).
-// Carrera/año por defecto de la actividad (si están configurados) — se
-// aplican a la Persona solo si todavía no tiene uno cargado, nunca pisan un
-// valor existente. Misma regla en alta manual, CSV e importación de Sheets.
+// Carrera/año por defecto de la actividad (si están configurados) — la
+// carrera se aplica a la Persona solo si todavía no tiene una cargada, nunca
+// pisa un valor existente. El año en cambio avanza al máximo entre el actual
+// y el de la actividad: no se puede asumir que todos avanzan un año por año
+// calendario, así que se toma como señal la actividad más "alta" en la que
+// participa (nunca baja el año, pedido de Gaspar 2026-08-02). Misma regla en
+// alta manual, inscripción masiva, CSV e importación de Sheets — todas pasan
+// por acá.
 async function aplicarCarreraAnioPorDefecto(
   actividad: { carreraPorDefectoId: string | null; anioPorDefecto: number | null },
   personaId: string,
@@ -112,7 +117,7 @@ async function aplicarCarreraAnioPorDefecto(
   if (actividad.carreraPorDefectoId && !persona.carreraId) {
     datosActualizar.carreraId = actividad.carreraPorDefectoId;
   }
-  if (actividad.anioPorDefecto && !persona.anio) {
+  if (actividad.anioPorDefecto && (!persona.anio || actividad.anioPorDefecto > persona.anio)) {
     datosActualizar.anio = actividad.anioPorDefecto;
   }
   if (Object.keys(datosActualizar).length > 0) {

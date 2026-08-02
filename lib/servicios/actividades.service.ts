@@ -271,8 +271,11 @@ export async function actualizarActividad(
 }
 
 // Completa carrera/año de quienes ya están inscriptos en esta actividad con
-// los valores por defecto configurados, sin pisar un dato ya cargado (mismo
-// criterio que la importación CSV/Sheets, ver importarParticipacionesCsv).
+// los valores por defecto configurados. La carrera solo se completa si no
+// había una cargada; el año en cambio avanza al máximo entre el actual y el
+// de la actividad (mismo criterio que aplicarCarreraAnioPorDefecto() en
+// participaciones.service.ts — no se puede asumir que todos avanzan un año
+// por año calendario, pedido de Gaspar 2026-08-02).
 export async function aplicarCarreraAnioPorDefectoAParticipantes(
   actividadId: string,
   usuarioId: string,
@@ -293,7 +296,7 @@ export async function aplicarCarreraAnioPorDefectoAParticipantes(
     if (actividad.carreraPorDefectoId && !persona.carreraId) {
       datosActualizar.carreraId = actividad.carreraPorDefectoId;
     }
-    if (actividad.anioPorDefecto && !persona.anio) {
+    if (actividad.anioPorDefecto && (!persona.anio || actividad.anioPorDefecto > persona.anio)) {
       datosActualizar.anio = actividad.anioPorDefecto;
     }
     if (Object.keys(datosActualizar).length === 0) continue;

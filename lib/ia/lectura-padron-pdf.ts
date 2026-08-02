@@ -1,5 +1,11 @@
-import { PDFParse } from "pdf-parse";
 import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
+
+// pdf-parse (vía pdfjs-dist) rompió la carga de módulo de rutas que ni
+// siquiera usan lectura de PDF (bug real 2026-08-02: /padron, /personas y
+// /punteo tiraban 500 porque este archivo se importa transitivamente desde
+// personas.service.ts) — se importa acá dinámicamente, dentro de la función
+// que realmente lee un PDF, para que un problema de esta dependencia quede
+// acotado a esa única acción en vez de tumbar rutas que no la usan.
 
 // Lectura automática de padrones en PDF — /15-ia.md sección 4 y
 // /09-modulo-padron-electoral.md sección 4. Los padrones que carga ATP son
@@ -133,6 +139,7 @@ export async function leerEntradasPadronPdf(
   pdfBuffer: Buffer,
   onProgreso?: (progreso: ProgresoLectura) => void,
 ): Promise<EntradaExtraidaPdf[]> {
+  const { PDFParse } = await import("pdf-parse");
   const parser = new PDFParse({ data: pdfBuffer });
   const resultado = await parser.getText();
 

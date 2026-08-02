@@ -28,6 +28,15 @@ import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-ant
 const CARACTERES_POR_LOTE = 6000;
 const MAX_TOKENS_LECTURA = 8192;
 
+// Padrones reales de ATP corren decenas de páginas (~1 lote por página, ver
+// medición 2026-08-01: Medicina dio 79 lotes) — leerlos en serie superaba el
+// límite de 300s de la función serverless de Vercel (timeout real observado
+// en producción, no hipotético). Se procesan en paralelo con este límite de
+// concurrencia para no pasarse de los rate limits razonables de la cuenta de
+// Anthropic mientras se corta el tiempo total a una fracción del que tomaría
+// en serie.
+const CONCURRENCIA_LECTURA = 20;
+
 export interface EntradaExtraidaPdf {
   dni: string | null;
   nombreCompleto: string;
@@ -153,13 +162,21 @@ export async function leerEntradasPadronPdf(
   }
 
   const lotes = agruparEnLotes(textoPorPagina);
-  const todasLasEntradas: EntradaExtraidaPdf[] = [];
+  const resultadosPorLote: EntradaExtraidaPdf[][] = new Array(lotes.length);
+  let completados = 0;
+  let siguienteIndice = 0;
 
-  for (let i = 0; i < lotes.length; i++) {
-    const entradasLote = await leerLoteTexto(lotes[i], i + 1);
-    todasLasEntradas.push(...entradasLote);
-    onProgreso?.({ loteActual: i + 1, totalLotes: lotes.length });
+  async function trabajador() {
+    while (siguienteIndice < lotes.length) {
+      const indice = siguienteIndice++;
+      resultadosPorLote[indice] = await leerLoteTexto(lotes[indice], indice + 1);
+      completados++;
+      onProgreso?.({ loteActual: completados, totalLotes: lotes.length });
+    }
   }
 
-  return todasLasEntradas;
+  const cantidadTrabajadores = Math.min(CONCURRENCIA_LECTURA, lotes.length);
+  await Promise.all(Array.from({ length: cantidadTrabajadores }, trabajador));
+
+  return resultadosPorLote.flat();
 }

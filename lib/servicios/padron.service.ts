@@ -6,7 +6,7 @@ import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
 import { leerEntradasPadronPdf } from "@/lib/ia/lectura-padron-pdf";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
-import type { TipoPadronElectoral } from "@prisma/client";
+import type { Prisma, TipoPadronElectoral } from "@prisma/client";
 
 // Padrón electoral — /09-modulo-padron-electoral.md. ATP maneja dos padrones
 // oficiales distintos y activos en simultáneo durante una elección: Consejo
@@ -188,6 +188,84 @@ async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMat
   };
 }
 
+// Resolver matching y crear las PadronEntrada fila por fila en serie no
+// escala con el volumen real de un padrón universitario (miles de filas): a
+// razón de 1-2 round-trips a la base por fila, eso solo ya puede superar el
+// límite de 300s de la función serverless de Vercel (timeout real observado
+// en producción, 2026-08-01, con el padrón de Medicina). Se resuelve el
+// matching de todas las filas en paralelo (con límite de concurrencia, mismo
+// motivo que en lectura-padron-pdf.ts) y se inserta todo con un único
+// `createMany` al final en vez de un `create` por fila.
+const CONCURRENCIA_MATCHING = 20;
+
+interface FilaPadronParaProcesar {
+  numeroFila: number;
+  dni?: string;
+  nombreCompletoOriginal?: string;
+  carreraTextoOriginal?: string | null;
+  confianzaExtraccion?: number;
+}
+
+async function procesarFilasPadronEnParalelo(
+  padronId: string,
+  filas: FilaPadronParaProcesar[],
+  umbral: number,
+  motivoOmision = "Falta DNI o nombre en la fila.",
+) {
+  const filasOmitidas: { numeroFila: number; motivo: string }[] = [];
+  const paraCrear: Prisma.PadronEntradaCreateManyInput[] = [];
+  let siguienteIndice = 0;
+
+  async function trabajador() {
+    while (siguienteIndice < filas.length) {
+      const indice = siguienteIndice++;
+      const fila = filas[indice];
+
+      if (!fila.dni || !fila.nombreCompletoOriginal) {
+        filasOmitidas.push({
+          numeroFila: fila.numeroFila,
+          motivo: motivoOmision,
+        });
+        continue;
+      }
+
+      const datosMatching = await resolverDatosMatchingEntrada(
+        {
+          dni: fila.dni,
+          nombreCompletoOriginal: fila.nombreCompletoOriginal,
+          carreraTextoOriginal: fila.carreraTextoOriginal,
+          confianzaExtraccion: fila.confianzaExtraccion,
+        },
+        umbral,
+      );
+
+      paraCrear.push({
+        padronElectoralId: padronId,
+        dni: fila.dni,
+        nombreCompletoOriginal: fila.nombreCompletoOriginal,
+        carreraTextoOriginal: fila.carreraTextoOriginal ?? null,
+        ...datosMatching,
+      });
+    }
+  }
+
+  const cantidadTrabajadores = Math.min(CONCURRENCIA_MATCHING, filas.length);
+  await Promise.all(Array.from({ length: cantidadTrabajadores }, trabajador));
+
+  if (paraCrear.length > 0) {
+    await prisma.padronEntrada.createMany({ data: paraCrear });
+  }
+
+  filasOmitidas.sort((a, b) => a.numeroFila - b.numeroFila);
+
+  return {
+    procesadas: paraCrear.length,
+    omitidas: filasOmitidas.length,
+    filasOmitidas,
+    totalFilas: filas.length,
+  };
+}
+
 interface ImportarEntradasPadronInput {
   padronId: string;
   usuarioId: string;
@@ -216,14 +294,8 @@ export async function importarEntradasPadronCsv({
     .upload(rutaArchivo, contenidoCsv, { contentType: "text/csv" });
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
-  let procesadas = 0;
-  let omitidas = 0;
-  const filasOmitidas: { numeroFila: number; motivo: string }[] = [];
 
-  for (let i = 0; i < filas.length; i++) {
-    const fila = filas[i];
-    const numeroFila = i + 2;
-
+  const filasParaProcesar: FilaPadronParaProcesar[] = filas.map((fila, i) => {
     const datos: Partial<Record<CampoPadronImportable, string>> = {};
     for (const [columna, campo] of Object.entries(mapeo)) {
       if (!campo) continue;
@@ -232,32 +304,17 @@ export async function importarEntradasPadronCsv({
     }
 
     const nombreCompletoOriginal =
-      datos.nombreCompleto ||
-      [datos.apellido, datos.nombre].filter(Boolean).join(", ") ||
-      undefined;
+      datos.nombreCompleto || [datos.apellido, datos.nombre].filter(Boolean).join(", ") || undefined;
 
-    if (!datos.dni || !nombreCompletoOriginal) {
-      omitidas++;
-      filasOmitidas.push({ numeroFila, motivo: "Falta DNI o nombre en la fila." });
-      continue;
-    }
+    return {
+      numeroFila: i + 2,
+      dni: datos.dni,
+      nombreCompletoOriginal,
+      carreraTextoOriginal: datos.carrera,
+    };
+  });
 
-    const datosMatching = await resolverDatosMatchingEntrada(
-      { dni: datos.dni, nombreCompletoOriginal, carreraTextoOriginal: datos.carrera },
-      umbral,
-    );
-
-    await prisma.padronEntrada.create({
-      data: {
-        padronElectoralId: padronId,
-        dni: datos.dni,
-        nombreCompletoOriginal,
-        carreraTextoOriginal: datos.carrera ?? null,
-        ...datosMatching,
-      },
-    });
-    procesadas++;
-  }
+  const resultado = await procesarFilasPadronEnParalelo(padronId, filasParaProcesar, umbral);
 
   if (!errorSubida) {
     await prisma.padronElectoral.update({
@@ -271,10 +328,10 @@ export async function importarEntradasPadronCsv({
     entidadId: padronId,
     accion: "importar",
     usuarioId,
-    metadata: { procesadas, omitidas, totalFilas: filas.length },
+    metadata: { procesadas: resultado.procesadas, omitidas: resultado.omitidas, totalFilas: filas.length },
   });
 
-  return { procesadas, omitidas, filasOmitidas, totalFilas: filas.length };
+  return resultado;
 }
 
 interface ImportarEntradasPadronPdfInput {
@@ -307,44 +364,21 @@ export async function importarEntradasPadronPdf({
   const entradasExtraidas = await leerEntradasPadronPdf(pdfBuffer);
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
-  let procesadas = 0;
-  let omitidas = 0;
-  const filasOmitidas: { numeroFila: number; motivo: string }[] = [];
 
-  for (let i = 0; i < entradasExtraidas.length; i++) {
-    const entrada = entradasExtraidas[i];
-    const numeroFila = i + 1;
+  const filasParaProcesar: FilaPadronParaProcesar[] = entradasExtraidas.map((entrada, i) => ({
+    numeroFila: i + 1,
+    dni: entrada.dni ?? undefined,
+    nombreCompletoOriginal: entrada.nombreCompleto,
+    carreraTextoOriginal: entrada.carrera,
+    confianzaExtraccion: entrada.confianzaExtraccion,
+  }));
 
-    if (!entrada.dni || !entrada.nombreCompleto) {
-      omitidas++;
-      filasOmitidas.push({
-        numeroFila,
-        motivo: "La IA no pudo leer DNI o nombre en esta fila del documento.",
-      });
-      continue;
-    }
-
-    const datosMatching = await resolverDatosMatchingEntrada(
-      {
-        dni: entrada.dni,
-        nombreCompletoOriginal: entrada.nombreCompleto,
-        carreraTextoOriginal: entrada.carrera,
-        confianzaExtraccion: entrada.confianzaExtraccion,
-      },
-      umbral,
-    );
-
-    await prisma.padronEntrada.create({
-      data: {
-        padronElectoralId: padronId,
-        dni: entrada.dni,
-        nombreCompletoOriginal: entrada.nombreCompleto,
-        carreraTextoOriginal: entrada.carrera,
-        ...datosMatching,
-      },
-    });
-    procesadas++;
-  }
+  const resultado = await procesarFilasPadronEnParalelo(
+    padronId,
+    filasParaProcesar,
+    umbral,
+    "La IA no pudo leer DNI o nombre en esta fila del documento.",
+  );
 
   if (!errorSubida) {
     await prisma.padronElectoral.update({
@@ -358,10 +392,15 @@ export async function importarEntradasPadronPdf({
     entidadId: padronId,
     accion: "importar",
     usuarioId,
-    metadata: { procesadas, omitidas, totalFilas: entradasExtraidas.length, origen: "pdf" },
+    metadata: {
+      procesadas: resultado.procesadas,
+      omitidas: resultado.omitidas,
+      totalFilas: entradasExtraidas.length,
+      origen: "pdf",
+    },
   });
 
-  return { procesadas, omitidas, filasOmitidas, totalFilas: entradasExtraidas.length };
+  return resultado;
 }
 
 export async function vincularEntradaManualmente(

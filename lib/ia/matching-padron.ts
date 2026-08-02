@@ -33,20 +33,26 @@ async function buscarPorDni(dni: string) {
   return prisma.persona.findFirst({ where: { dni, estadoFicha: { not: "fusionada" } } });
 }
 
+// El padrón trae el nombre como "Apellido, Nombre" — se usa solo el
+// apellido como ancla de la búsqueda de candidatos, nunca los nombres de
+// pila sueltos. Un nombre de pila común (Ana, María, Luis...) no es
+// distintivo y generaba candidatos completamente ajenos con el mismo primer
+// nombre pero apellido distinto (bug real 2026-08-02: "Abraham, Ana Paula"
+// se vinculó automático a una persona apellidada "Ascúa" solo porque
+// compartían los nombres de pila "Ana"/"Paula"). El apellido sigue
+// buscándose contra ambos campos de la persona candidata, por si el orden
+// viniera invertido en algún caso.
 async function obtenerCandidatosPorNombre(nombreCompleto: string): Promise<CandidatoPadron[]> {
-  const tokens = nombreCompleto
-    .replace(",", " ")
-    .trim()
-    .split(/\s+/)
-    .filter((t) => t.length >= 3);
-  if (tokens.length === 0) return [];
+  const apellidoOriginal = (nombreCompleto.split(",")[0] ?? "").trim();
+  const tokensApellido = apellidoOriginal.split(/\s+/).filter((t) => t.length >= 3);
+  if (tokensApellido.length === 0) return [];
 
   const candidatos = await prisma.persona.findMany({
     where: {
       estadoFicha: { not: "fusionada" },
-      OR: tokens.flatMap((t) => [
-        { nombre: { contains: t, mode: "insensitive" as const } },
+      OR: tokensApellido.flatMap((t) => [
         { apellido: { contains: t, mode: "insensitive" as const } },
+        { nombre: { contains: t, mode: "insensitive" as const } },
       ]),
     },
     select: { id: true, nombre: true, apellido: true, dni: true },
@@ -86,7 +92,7 @@ ${JSON.stringify({ nombreCompletoOriginal: entrada.nombreCompletoOriginal })}
 Personas candidatas ya cargadas (coinciden en algún token del nombre):
 ${JSON.stringify(candidatos.map((c) => ({ id: c.id, nombre: c.nombre, apellido: c.apellido })))}
 
-Considerá que el nombre del padrón puede venir en cualquier orden ("Apellido, Nombre" o "Nombre Apellido"), con mayúsculas distintas, sin acentos, o con nombres compuestos. Si ninguna candidata es razonablemente la misma persona, decilo explícitamente.
+Considerá que el nombre del padrón puede venir en cualquier orden ("Apellido, Nombre" o "Nombre Apellido"), con mayúsculas distintas, sin acentos, o con nombres compuestos. El apellido es la señal fuerte: si el apellido no coincide (aunque sea con variantes de tipeo o acentos), NO es la misma persona, sin importar cuántos nombres de pila compartan — nombres de pila comunes (Ana, María, Luis, José...) no alcanzan por sí solos, ni siquiera si coinciden varios. Si ninguna candidata es razonablemente la misma persona, decilo explícitamente.
 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"personaId": "<id de la candidata o null>", "confianza": <número entre 0 y 1>, "motivo": "<explicación breve en español>"}`;

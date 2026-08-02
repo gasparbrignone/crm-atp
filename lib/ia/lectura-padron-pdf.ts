@@ -31,11 +31,14 @@ const MAX_TOKENS_LECTURA = 8192;
 // Padrones reales de ATP corren decenas de páginas (~1 lote por página, ver
 // medición 2026-08-01: Medicina dio 79 lotes) — leerlos en serie superaba el
 // límite de 300s de la función serverless de Vercel (timeout real observado
-// en producción, no hipotético). Se procesan en paralelo con este límite de
-// concurrencia para no pasarse de los rate limits razonables de la cuenta de
-// Anthropic mientras se corta el tiempo total a una fracción del que tomaría
-// en serie.
-const CONCURRENCIA_LECTURA = 20;
+// en producción, no hipotético). Se procesan en paralelo, pero el límite de
+// concurrencia está acotado por el rate limit real de la cuenta de Anthropic
+// (80.000 tokens de salida por minuto para Haiku, observado en producción
+// 2026-08-02): con MAX_TOKENS_LECTURA=8192 por lote, más de ~9 lotes en
+// simultáneo ya reservan más de ese cupo y disparan 429. Se deja margen para
+// que el matching (padron.service.ts) también pueda usar Haiku en paralelo
+// sin competir por todo el cupo.
+const CONCURRENCIA_LECTURA = 7;
 
 export interface EntradaExtraidaPdf {
   dni: string | null;
@@ -104,13 +107,14 @@ function agruparEnLotes(textoPorPagina: string[]): string[] {
 async function leerLoteTexto(texto: string, numeroLote: number): Promise<EntradaExtraidaPdf[]> {
   const cliente = obtenerClienteAnthropic();
 
-  const respuesta = await cliente.messages.create({
-    model: MODELO_IA_LIVIANO,
-    max_tokens: MAX_TOKENS_LECTURA,
-    messages: [
-      {
-        role: "user",
-        content: `Este es texto extraído de un padrón electoral universitario (listado de personas habilitadas para votar), tal como aparece en el PDF original — el orden de lectura por columna puede venir levemente desordenado.
+  const respuesta = await cliente.messages.create(
+    {
+      model: MODELO_IA_LIVIANO,
+      max_tokens: MAX_TOKENS_LECTURA,
+      messages: [
+        {
+          role: "user",
+          content: `Este es texto extraído de un padrón electoral universitario (listado de personas habilitadas para votar), tal como aparece en el PDF original — el orden de lectura por columna puede venir levemente desordenado.
 
 Texto:
 ${texto}
@@ -119,9 +123,15 @@ Extraé cada fila de persona. Para cada una: DNI (o null si no está o no es leg
 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"entradas": [{"dni": "<dni o null>", "nombreCompleto": "<nombre tal como figura>", "carrera": "<carrera o null>", "confianzaExtraccion": <0 a 1>}]}`,
-      },
-    ],
-  });
+        },
+      ],
+    },
+    // maxRetries por encima del default (2): con concurrencia real contra el
+    // cupo de 80k tokens/min de la cuenta, un 429 puntual es esperable y se
+    // resuelve solo esperando el retry-after — no hace falta que rompa el
+    // lote entero (bug real 2026-08-02, ver nota arriba).
+    { maxRetries: 6 },
+  );
 
   // Cortada por longitud: NO tratar como "sin entradas" — eso es
   // indistinguible de un lote realmente vacío y llevó al bug real

@@ -38,26 +38,63 @@ export const MODELO_IA_LIVIANO = "gemini-3.1-flash-lite";
 // extracción de texto), así que se desactiva siempre.
 export const SIN_PENSAMIENTO = { thinkingBudget: 0 } as const;
 
-// El SDK de Gemini no reintenta automáticamente 429/5xx como sí hacía el SDK
-// de Anthropic — se implementa acá el mismo tipo de resiliencia ante picos de
-// contención puntuales de la cuota gratuita.
 function esperar(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Límite real de la cuota gratuita, medido contra la cuenta real de Gaspar
+// (2026-08-02): 429 "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+// quotaValue 15, para gemini-3.1-flash-lite. Es un límite POR MINUTO y por
+// modelo, compartido entre las cuatro funciones de lib/ia/ que usan
+// MODELO_IA_LIVIANO — no alcanza con acotar la concurrencia de un solo lugar
+// (como si fuera Anthropic, con miles de RPM pagos), hace falta un límite de
+// tasa real compartido por todo el módulo. Se deja margen bajo el máximo real
+// (15) para otras llamadas que puedan estar en vuelo en la misma ventana.
+const VENTANA_LIMITE_MS = 60_000;
+const MAX_LLAMADAS_POR_VENTANA = 12;
+const historialLlamadas: number[] = [];
+
+async function esperarCupo(): Promise<void> {
+  for (;;) {
+    const ahora = Date.now();
+    while (historialLlamadas.length && historialLlamadas[0] <= ahora - VENTANA_LIMITE_MS) {
+      historialLlamadas.shift();
+    }
+    if (historialLlamadas.length < MAX_LLAMADAS_POR_VENTANA) {
+      historialLlamadas.push(ahora);
+      return;
+    }
+    const espera = historialLlamadas[0] + VENTANA_LIMITE_MS - ahora + 100;
+    await esperar(Math.max(espera, 100));
+  }
+}
+
+// Además del límite propio, un 429 puntual (otra instancia serverless
+// concurrente consumiendo la misma cuota, por ejemplo) trae el tiempo de
+// espera real en el propio mensaje de error — se lo respeta en vez de un
+// backoff fijo, porque la cuenta gratuita puede pedir esperar bastante más
+// que un backoff exponencial corto (medido: hasta 56s reales).
+function segundosDeEsperaSugeridos(error: unknown): number | null {
+  if (!(error instanceof ApiError)) return null;
+  const match = error.message.match(/retry in (\d+(?:\.\d+)?)s/i);
+  return match ? Number(match[1]) : null;
+}
+
 export async function generarConReintentos<T>(
   llamada: () => Promise<T>,
-  intentos = 5,
+  intentos = 4,
 ): Promise<T> {
   let ultimoError: unknown;
   for (let intento = 0; intento < intentos; intento++) {
+    await esperarCupo();
     try {
       return await llamada();
     } catch (error) {
       ultimoError = error;
       const reintentable = error instanceof ApiError && (error.status === 429 || error.status >= 500);
       if (!reintentable || intento === intentos - 1) throw error;
-      await esperar(1000 * 2 ** intento);
+      const sugerido = segundosDeEsperaSugeridos(error);
+      await esperar(sugerido ? sugerido * 1000 + 500 : 1000 * 2 ** intento);
     }
   }
   throw ultimoError;

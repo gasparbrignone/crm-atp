@@ -37,12 +37,13 @@ import {
 const CARACTERES_POR_LOTE = 24000;
 const MAX_TOKENS_LECTURA = 32768;
 
-// Concurrencia conservadora: la cuota gratuita de Gemini es baja en RPM
-// (bastante más baja que el límite de Anthropic que motivó la paralelización
-// original) — hasta tener un uso real medido contra la cuenta de Gaspar, se
-// prefiere subestimar la concurrencia y confiar en los reintentos con
-// backoff (generarConReintentos) para picos puntuales.
-const CONCURRENCIA_LECTURA = 4;
+// El límite real de la cuota gratuita (15 requests/min para
+// gemini-3.1-flash-lite, medido 2026-08-02 contra la cuenta real — ver
+// cliente-ia.ts) ya lo hace cumplir el limitador de tasa compartido en
+// generarConReintentos(), así que esta concurrencia solo controla cuántos
+// lotes pueden estar "en cola" esperando cupo a la vez — no hace falta
+// subestimarla, el límite real ya está garantizado en otro lado.
+const CONCURRENCIA_LECTURA = 10;
 
 export interface EntradaExtraidaPdf {
   dni: string | null;

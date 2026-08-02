@@ -197,9 +197,10 @@ async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMat
 // inserta todo con un único `createMany` al final en vez de un `create` por
 // fila. La mayoría de las filas no llaman a la IA (solo cuando hay candidato
 // por nombre — la mayoría son sin_coincidencia, resuelto solo con consultas a
-// la base), pero la concurrencia igual queda acotada por la cuota gratuita de
-// Gemini (RPM bajo, migración 2026-08-02, ver /15-ia.md sección 8).
-const CONCURRENCIA_MATCHING = 4;
+// la base); las que sí llaman a la IA ya respetan el límite real de la cuota
+// gratuita de Gemini a través del limitador de tasa compartido en
+// cliente-ia.ts, así que esta concurrencia no necesita subestimarse.
+const CONCURRENCIA_MATCHING = 10;
 
 interface FilaPadronParaProcesar {
   numeroFila: number;

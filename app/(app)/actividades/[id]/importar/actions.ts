@@ -3,9 +3,23 @@
 import { revalidatePath } from "next/cache";
 import { requerirPermiso } from "@/lib/permisos/permisos";
 import { importarParticipacionesCsv } from "@/lib/servicios/participaciones.service";
+import { extraerIdDeSheets, listarHojas, obtenerHojaComoCsv } from "@/lib/servicios/google-sheets.service";
 import { prisma } from "@/lib/prisma/client";
 import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
 import type { CandidatoAmbiguo } from "@/lib/ia/deteccion-duplicados";
+
+export async function listarHojasDeCalculoAction(urlHoja: string) {
+  await requerirPermiso("importaciones.ejecutar");
+  const spreadsheetId = extraerIdDeSheets(urlHoja);
+  if (!spreadsheetId) throw new Error("Ese link no parece ser de Google Sheets.");
+  const hojas = await listarHojas(spreadsheetId);
+  return { spreadsheetId, hojas };
+}
+
+export async function obtenerHojaComoCsvAction(spreadsheetId: string, tituloHoja: string) {
+  await requerirPermiso("importaciones.ejecutar");
+  return obtenerHojaComoCsv(spreadsheetId, tituloHoja);
+}
 
 export interface FilaPendienteRevision {
   numeroFila: number;
@@ -28,8 +42,6 @@ export async function importarInscriptosCsvAction(
   nombreArchivo: string,
   contenidoCsv: string,
   mapeo: Record<string, CampoInscripcionImportable | "">,
-  carreraDefaultId: string | undefined,
-  anioDefault: number | undefined,
 ): Promise<ResultadoImportacionInscriptos> {
   const usuario = await requerirPermiso("importaciones.ejecutar");
 
@@ -39,8 +51,6 @@ export async function importarInscriptosCsvAction(
     nombreArchivo,
     contenidoCsv,
     mapeo,
-    carreraDefaultId,
-    anioDefault,
   });
 
   revalidatePath(`/actividades/${actividadId}`);

@@ -35,6 +35,17 @@ const actividadBaseSchema = z.object({
   responsableId: z.string().trim().min(1, "El responsable es obligatorio."),
   actividadPadreId: opcional,
   observaciones: opcional,
+  // Carrera/año por defecto de la actividad (opcionales) — pedido de Gaspar
+  // (2026-08-01): toda Persona que se inscriba acá recibe este valor solo si
+  // no tiene uno cargado ya, sin importar la vía (manual, CSV, Sheets).
+  carreraPorDefectoId: opcional,
+  anioPorDefecto: z
+    .string()
+    .optional()
+    .transform((v) => (v ? Number(v) : undefined))
+    .refine((v) => v === undefined || (Number.isInteger(v) && v >= 1 && v <= 6), {
+      message: "El año debe estar entre 1 y 6.",
+    }),
 });
 
 // Validación completa — usada en el alta. La edición inline valida campo a

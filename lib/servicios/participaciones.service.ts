@@ -5,6 +5,7 @@ import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buscarPersonaCoincidente, obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
 import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
+import { partirNombreYApellido } from "@/lib/utils/nombre-padron";
 
 export class ActividadNoAceptaInscripcionesError extends Error {
   constructor(public estado: EstadoActividad) {
@@ -97,11 +98,35 @@ export async function buscarPersonasParaInscribir(actividadId: string, q: string
 // reactiva el registro existente en vez de duplicarlo. El cupo no bloquea la
 // inscripción: cuando se supera, la persona queda "excedente" (indicador
 // visual, no un estado nuevo — /07-modulo-participaciones.md sección 3.3).
+// Carrera/año por defecto de la actividad (si están configurados) — se
+// aplican a la Persona solo si todavía no tiene uno cargado, nunca pisan un
+// valor existente. Misma regla en alta manual, CSV e importación de Sheets.
+async function aplicarCarreraAnioPorDefecto(
+  actividad: { carreraPorDefectoId: string | null; anioPorDefecto: number | null },
+  personaId: string,
+) {
+  if (!actividad.carreraPorDefectoId && !actividad.anioPorDefecto) return;
+
+  const persona = await prisma.persona.findUniqueOrThrow({ where: { id: personaId } });
+  const datosActualizar: { carreraId?: string; anio?: number } = {};
+  if (actividad.carreraPorDefectoId && !persona.carreraId) {
+    datosActualizar.carreraId = actividad.carreraPorDefectoId;
+  }
+  if (actividad.anioPorDefecto && !persona.anio) {
+    datosActualizar.anio = actividad.anioPorDefecto;
+  }
+  if (Object.keys(datosActualizar).length > 0) {
+    await prisma.persona.update({ where: { id: personaId }, data: datosActualizar });
+  }
+}
+
 export async function inscribirPersona(actividadId: string, personaId: string, usuarioId: string) {
   const actividad = await prisma.actividad.findUniqueOrThrow({ where: { id: actividadId } });
   if (actividad.estado === "finalizada" || actividad.estado === "cancelada") {
     throw new ActividadNoAceptaInscripcionesError(actividad.estado);
   }
+
+  await aplicarCarreraAnioPorDefecto(actividad, personaId);
 
   const existente = await prisma.participacion.findUnique({
     where: { personaId_actividadId: { personaId, actividadId } },
@@ -275,8 +300,6 @@ interface ImportarParticipacionesCsvInput {
   nombreArchivo: string;
   contenidoCsv: string;
   mapeo: Record<string, CampoInscripcionImportable | "">;
-  carreraDefaultId?: string;
-  anioDefault?: number;
 }
 
 // Importación de inscriptos por CSV — /07-modulo-participaciones.md sección
@@ -285,15 +308,16 @@ interface ImportarParticipacionesCsvInput {
 // coincidencia con confianza suficiente, la fila queda pendiente de revisión
 // manual (mismo mecanismo que ImportJobError del resto del sistema). Una
 // reimportación de la misma actividad solo agrega inscripciones nuevas,
-// nunca cancela a quien ya no figura en el archivo.
+// nunca cancela a quien ya no figura en el archivo. La carrera/año por
+// defecto (si la actividad los tiene configurados) se aplica automáticamente
+// vía inscribirPersona(), no hace falta pasarlos acá (pedido de Gaspar,
+// 2026-08-02: es una propiedad de la actividad, no de cada importación).
 export async function importarParticipacionesCsv({
   actividadId,
   usuarioId,
   nombreArchivo,
   contenidoCsv,
   mapeo,
-  carreraDefaultId,
-  anioDefault,
 }: ImportarParticipacionesCsvInput) {
   const actividad = await prisma.actividad.findUniqueOrThrow({ where: { id: actividadId } });
   if (actividad.estado === "finalizada" || actividad.estado === "cancelada") {
@@ -336,6 +360,16 @@ export async function importarParticipacionesCsv({
       if (!campo) continue;
       const valor = fila[columna];
       if (valor) datos[campo] = valor.trim();
+    }
+
+    // El formulario de origen suele traer el nombre en una sola columna
+    // ("Nombre y apellido") en vez de dos separadas — se parte con la misma
+    // heurística que la carga manual desde Padrón (editable ahí, acá se
+    // asume tal cual dado el volumen de filas de una importación masiva).
+    if (datos.nombreCompleto && (!datos.nombre || !datos.apellido)) {
+      const partido = partirNombreYApellido(datos.nombreCompleto);
+      datos.nombre = datos.nombre || partido.nombre;
+      datos.apellido = datos.apellido || partido.apellido;
     }
 
     if (!datos.nombre || !datos.apellido) {
@@ -386,8 +420,6 @@ export async function importarParticipacionesCsv({
             nombre: datos.nombre,
             apellido: datos.apellido,
             dni: datos.dni ?? null,
-            carreraId: carreraDefaultId ?? null,
-            anio: anioDefault ?? null,
             creadoPorId: usuarioId,
             modificadoPorId: usuarioId,
             telefonos: datos.telefono
@@ -407,15 +439,6 @@ export async function importarParticipacionesCsv({
         altasNuevas++;
       } else {
         personaId = resultado.personaId;
-        if (carreraDefaultId || anioDefault) {
-          const persona = await prisma.persona.findUniqueOrThrow({ where: { id: personaId } });
-          const datosActualizar: { carreraId?: string; anio?: number } = {};
-          if (carreraDefaultId && !persona.carreraId) datosActualizar.carreraId = carreraDefaultId;
-          if (anioDefault && !persona.anio) datosActualizar.anio = anioDefault;
-          if (Object.keys(datosActualizar).length > 0) {
-            await prisma.persona.update({ where: { id: persona.id }, data: datosActualizar });
-          }
-        }
       }
 
       await inscribirPersona(actividadId, personaId, usuarioId);

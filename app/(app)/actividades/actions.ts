@@ -36,6 +36,8 @@ function datosDeFormulario(formData: FormData) {
     responsableId: String(formData.get("responsableId") ?? ""),
     actividadPadreId: String(formData.get("actividadPadreId") ?? ""),
     observaciones: String(formData.get("observaciones") ?? ""),
+    carreraPorDefectoId: String(formData.get("carreraPorDefectoId") ?? ""),
+    anioPorDefecto: String(formData.get("anioPorDefecto") ?? ""),
   };
 }
 

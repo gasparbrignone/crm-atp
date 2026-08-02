@@ -38,11 +38,12 @@ export default async function ActividadDetallePage({
   await requerirPermiso("actividades.ver");
   const { id } = await params;
 
-  const [actividad, tipos, responsables, actividadesPadre, usuario, puedeEditarBase, puedeGestionarTodas, puedeEliminar, puedeGestionarParticipaciones, puedeImportar, historial] =
+  const [actividad, tipos, responsables, carreras, actividadesPadre, usuario, puedeEditarBase, puedeGestionarTodas, puedeEliminar, puedeGestionarParticipaciones, puedeImportar, historial] =
     await Promise.all([
       obtenerActividad(id),
       prisma.tipoActividad.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
       prisma.usuario.findMany({ where: { estado: "activo" }, orderBy: { nombre: "asc" } }),
+      prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
       prisma.actividad.findMany({
         where: { id: { not: id } },
         orderBy: { fechaInicio: "desc" },
@@ -88,6 +89,14 @@ export default async function ActividadDetallePage({
   const opcionesPadre = [
     { value: "", label: "Ninguna (actividad independiente)" },
     ...actividadesPadre.map((a) => ({ value: a.id, label: a.nombre })),
+  ];
+  const opcionesCarrera = [
+    { value: "", label: "Sin carrera por defecto" },
+    ...carreras.map((c) => ({ value: c.id, label: c.nombre })),
+  ];
+  const opcionesAnioActividad = [
+    { value: "", label: "Sin año por defecto" },
+    ...[1, 2, 3, 4, 5, 6].map((a) => ({ value: String(a), label: `Año ${a}` })),
   ];
 
   const activosCount = actividad.participaciones.filter((p) => p.estado !== "cancelado").length;
@@ -247,6 +256,26 @@ export default async function ActividadDetallePage({
                     valor={actividad.actividadPadreId ?? ""}
                     tipo="select"
                     opciones={opcionesPadre}
+                    editable={puedeEditar}
+                    accion={actualizarCampoActividadAction}
+                  />
+                  <CampoEditableActividad
+                    actividadId={id}
+                    campo="carreraPorDefectoId"
+                    label="Carrera por defecto de los inscriptos"
+                    valor={actividad.carreraPorDefectoId ?? ""}
+                    tipo="select"
+                    opciones={opcionesCarrera}
+                    editable={puedeEditar}
+                    accion={actualizarCampoActividadAction}
+                  />
+                  <CampoEditableActividad
+                    actividadId={id}
+                    campo="anioPorDefecto"
+                    label="Año por defecto de los inscriptos"
+                    valor={actividad.anioPorDefecto ? String(actividad.anioPorDefecto) : ""}
+                    tipo="select"
+                    opciones={opcionesAnioActividad}
                     editable={puedeEditar}
                     accion={actualizarCampoActividadAction}
                   />

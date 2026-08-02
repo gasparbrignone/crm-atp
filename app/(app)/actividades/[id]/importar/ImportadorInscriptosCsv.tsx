@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Papa from "papaparse";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -19,66 +18,53 @@ import {
   sugerirMapeoInscripcion,
   type CampoInscripcionImportable,
 } from "@/lib/utils/csv-mapping-inscripciones";
-import { importarInscriptosCsvAction, type ResultadoImportacionInscriptos } from "./actions";
+import { SelectorOrigenCsv, type DatosCsvCargado } from "@/components/importaciones/SelectorOrigenCsv";
+import {
+  importarInscriptosCsvAction,
+  listarHojasDeCalculoAction,
+  obtenerHojaComoCsvAction,
+  type ResultadoImportacionInscriptos,
+} from "./actions";
 
 type Paso = "subir" | "mapear" | "resultado";
-
-interface Carrera {
-  id: string;
-  nombre: string;
-}
 
 // Importación de inscriptos a una actividad puntual —
 // /07-modulo-participaciones.md sección 7: el dato real suele venir de un
 // formulario/planilla externa (Sheets exportado a CSV), sin DNI. El matcheo
 // contra Personas ya cargadas (teléfono, después nombre+apellido asistido
 // por IA) ocurre server-side; acá solo se sube el archivo y se mapean
-// columnas, igual que la importación de Personas de Fase 1.
-export function ImportadorInscriptosCsv({
-  actividadId,
-  carreras,
-}: {
-  actividadId: string;
-  carreras: Carrera[];
-}) {
+// columnas, igual que la importación de Personas de Fase 1. La carrera/año
+// por defecto ya no se pide acá — es una propiedad de la Actividad misma
+// (ver pestaña "Datos generales"), se aplica sola a cada inscripto.
+export function ImportadorInscriptosCsv({ actividadId }: { actividadId: string }) {
   const [paso, setPaso] = useState<Paso>("subir");
   const [nombreArchivo, setNombreArchivo] = useState("");
   const [contenidoCsv, setContenidoCsv] = useState("");
   const [encabezados, setEncabezados] = useState<string[]>([]);
   const [filasPreview, setFilasPreview] = useState<Record<string, string>[]>([]);
   const [mapeo, setMapeo] = useState<Record<string, CampoInscripcionImportable | "">>({});
-  const [carreraDefaultId, setCarreraDefaultId] = useState("");
-  const [anioDefault, setAnioDefault] = useState("");
   const [resultado, setResultado] = useState<ResultadoImportacionInscriptos | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [procesando, iniciarTransicion] = useTransition();
 
-  function onArchivoSeleccionado(archivo: File) {
+  function onCsvCargado(datos: DatosCsvCargado) {
     setError(null);
-    setNombreArchivo(archivo.name);
-    const lector = new FileReader();
-    lector.onload = () => {
-      const texto = String(lector.result ?? "");
-      setContenidoCsv(texto);
-      const parsed = Papa.parse<Record<string, string>>(texto, {
-        header: true,
-        skipEmptyLines: true,
-        preview: 5,
-      });
-      const campos = parsed.meta.fields ?? [];
-      setEncabezados(campos);
-      setFilasPreview(parsed.data);
-      setMapeo(sugerirMapeoInscripcion(campos));
-      setPaso("mapear");
-    };
-    lector.readAsText(archivo, "UTF-8");
+    setNombreArchivo(datos.nombreArchivo);
+    setContenidoCsv(datos.contenidoCsv);
+    setEncabezados(datos.encabezados);
+    setFilasPreview(datos.filasPreview);
+    setMapeo(sugerirMapeoInscripcion(datos.encabezados));
+    setPaso("mapear");
   }
 
   function confirmar() {
-    const tieneNombreYApellido =
-      Object.values(mapeo).includes("nombre") && Object.values(mapeo).includes("apellido");
-    if (!tieneNombreYApellido) {
-      setError("Mapeá al menos las columnas de Nombre y Apellido antes de continuar.");
+    const tieneNombre =
+      Object.values(mapeo).includes("nombreCompleto") ||
+      (Object.values(mapeo).includes("nombre") && Object.values(mapeo).includes("apellido"));
+    if (!tieneNombre) {
+      setError(
+        "Mapeá al menos el nombre (una columna de nombre completo, o nombre + apellido por separado).",
+      );
       return;
     }
     iniciarTransicion(async () => {
@@ -87,8 +73,6 @@ export function ImportadorInscriptosCsv({
         nombreArchivo,
         contenidoCsv,
         mapeo,
-        carreraDefaultId || undefined,
-        anioDefault ? Number(anioDefault) : undefined,
       );
       setResultado(resultado);
       setPaso("resultado");
@@ -97,21 +81,11 @@ export function ImportadorInscriptosCsv({
 
   if (paso === "subir") {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-texto-secundario">
-          Subí el CSV de inscriptos a esta actividad (por ejemplo, exportado de la planilla de
-          Google Sheets del formulario). La primera fila debe tener los nombres de columna.
-        </p>
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          onChange={(e) => {
-            const archivo = e.target.files?.[0];
-            if (archivo) onArchivoSeleccionado(archivo);
-          }}
-          className="rounded-borde border border-borde p-3 text-sm"
-        />
-      </div>
+      <SelectorOrigenCsv
+        onCargado={onCsvCargado}
+        listarHojasAction={listarHojasDeCalculoAction}
+        obtenerHojaCsvAction={obtenerHojaComoCsvAction}
+      />
     );
   }
 
@@ -143,39 +117,6 @@ export function ImportadorInscriptosCsv({
               ))}
             </Select>
           ))}
-        </div>
-
-        <div className="rounded-borde border border-borde p-3">
-          <p className="mb-2 text-sm font-medium text-texto">
-            Carrera y año por defecto (opcional)
-          </p>
-          <p className="mb-3 text-xs text-texto-secundario">
-            Si esta actividad es de una carrera/año conocidos (ej. un repaso puntual), se aplica
-            solo a personas nuevas o que todavía no tengan ese dato cargado — nunca pisa un valor
-            existente.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            <Select
-              value={carreraDefaultId}
-              onChange={(e) => setCarreraDefaultId(e.target.value)}
-              className="w-auto"
-            >
-              <option value="">Sin carrera por defecto</option>
-              {carreras.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nombre}
-                </option>
-              ))}
-            </Select>
-            <Select value={anioDefault} onChange={(e) => setAnioDefault(e.target.value)} className="w-auto">
-              <option value="">Sin año por defecto</option>
-              {[1, 2, 3, 4, 5, 6].map((a) => (
-                <option key={a} value={a}>
-                  Año {a}
-                </option>
-              ))}
-            </Select>
-          </div>
         </div>
 
         <div>

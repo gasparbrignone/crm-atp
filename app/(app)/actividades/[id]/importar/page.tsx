@@ -12,20 +12,17 @@ export default async function ImportarInscriptosPage({
   await requerirPermiso("importaciones.ejecutar");
   const { id } = await params;
 
-  const [actividad, carreras] = await Promise.all([
-    prisma.actividad.findUnique({ where: { id }, select: { id: true, nombre: true } }),
-    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
-  ]);
+  const actividad = await prisma.actividad.findUnique({ where: { id }, select: { id: true, nombre: true } });
   if (!actividad) notFound();
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <div>
-        <h1 className="text-xl font-semibold text-texto">Importar inscriptos desde CSV</h1>
+        <h1 className="text-xl font-semibold text-texto">Importar inscriptos</h1>
         <p className="text-sm text-texto-secundario">Actividad: {actividad.nombre}</p>
       </div>
       <Card>
-        <ImportadorInscriptosCsv actividadId={actividad.id} carreras={carreras} />
+        <ImportadorInscriptosCsv actividadId={actividad.id} />
       </Card>
     </div>
   );

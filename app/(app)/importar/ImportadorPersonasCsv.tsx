@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Papa from "papaparse";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -19,7 +18,13 @@ import {
   sugerirMapeo,
   type CampoPersonaImportable,
 } from "@/lib/utils/csv-mapping";
-import { ejecutarImportacionCsvAction, type ResultadoImportacion } from "./actions";
+import { SelectorOrigenCsv, type DatosCsvCargado } from "@/components/importaciones/SelectorOrigenCsv";
+import {
+  ejecutarImportacionCsvAction,
+  listarHojasDeCalculoAction,
+  obtenerHojaComoCsvAction,
+  type ResultadoImportacion,
+} from "./actions";
 
 type Paso = "subir" | "mapear" | "resultado";
 
@@ -37,25 +42,14 @@ export function ImportadorPersonasCsv() {
   const [error, setError] = useState<string | null>(null);
   const [procesando, iniciarTransicion] = useTransition();
 
-  function onArchivoSeleccionado(archivo: File) {
+  function onCsvCargado(datos: DatosCsvCargado) {
     setError(null);
-    setNombreArchivo(archivo.name);
-    const lector = new FileReader();
-    lector.onload = () => {
-      const texto = String(lector.result ?? "");
-      setContenidoCsv(texto);
-      const parsed = Papa.parse<Record<string, string>>(texto, {
-        header: true,
-        skipEmptyLines: true,
-        preview: 5,
-      });
-      const campos = parsed.meta.fields ?? [];
-      setEncabezados(campos);
-      setFilasPreview(parsed.data);
-      setMapeo(sugerirMapeo(campos));
-      setPaso("mapear");
-    };
-    lector.readAsText(archivo, "UTF-8");
+    setNombreArchivo(datos.nombreArchivo);
+    setContenidoCsv(datos.contenidoCsv);
+    setEncabezados(datos.encabezados);
+    setFilasPreview(datos.filasPreview);
+    setMapeo(sugerirMapeo(datos.encabezados));
+    setPaso("mapear");
   }
 
   function confirmar() {
@@ -74,21 +68,11 @@ export function ImportadorPersonasCsv() {
 
   if (paso === "subir") {
     return (
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-texto-secundario">
-          Subí un archivo CSV con tus contactos. La primera fila debe tener los nombres de
-          columna.
-        </p>
-        <input
-          type="file"
-          accept=".csv,text/csv"
-          onChange={(e) => {
-            const archivo = e.target.files?.[0];
-            if (archivo) onArchivoSeleccionado(archivo);
-          }}
-          className="rounded-borde border border-borde p-3 text-sm"
-        />
-      </div>
+      <SelectorOrigenCsv
+        onCargado={onCsvCargado}
+        listarHojasAction={listarHojasDeCalculoAction}
+        obtenerHojaCsvAction={obtenerHojaComoCsvAction}
+      />
     );
   }
 

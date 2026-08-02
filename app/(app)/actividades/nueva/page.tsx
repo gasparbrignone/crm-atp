@@ -8,9 +8,10 @@ import { FormularioActividad } from "../FormularioActividad";
 export default async function NuevaActividadPage() {
   const usuario = await requerirPermiso("actividades.crear");
 
-  const [tipos, responsables, actividadesPadre] = await Promise.all([
+  const [tipos, responsables, carreras, actividadesPadre] = await Promise.all([
     prisma.tipoActividad.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
     prisma.usuario.findMany({ where: { estado: "activo" }, orderBy: { nombre: "asc" } }),
+    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
     prisma.actividad.findMany({
       where: { estado: { in: ["planificada", "en_curso"] } },
       orderBy: { fechaInicio: "desc" },
@@ -31,6 +32,7 @@ export default async function NuevaActividadPage() {
         <FormularioActividad
           tipos={tipos}
           responsables={responsables}
+          carreras={carreras}
           actividadesPadre={actividadesPadre}
           responsableIdDefault={usuario.id}
         />

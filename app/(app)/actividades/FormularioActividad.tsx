@@ -6,13 +6,14 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Textarea } from "@/components/ui/Textarea";
 import { crearActividadAction, type EstadoFormularioActividad } from "./actions";
-import type { TipoActividad, Usuario } from "@prisma/client";
+import type { TipoActividad, Usuario, Carrera } from "@prisma/client";
 
 const estadoInicial: EstadoFormularioActividad = {};
 
 interface FormularioActividadProps {
   tipos: TipoActividad[];
   responsables: Pick<Usuario, "id" | "nombre" | "apellido">[];
+  carreras: Carrera[];
   actividadesPadre: { id: string; nombre: string }[];
   responsableIdDefault?: string;
 }
@@ -23,6 +24,7 @@ interface FormularioActividadProps {
 export function FormularioActividad({
   tipos,
   responsables,
+  carreras,
   actividadesPadre,
   responsableIdDefault,
 }: FormularioActividadProps) {
@@ -110,6 +112,34 @@ export function FormularioActividad({
           </option>
         ))}
       </Select>
+
+      <div className="rounded-borde border border-borde p-3">
+        <p className="mb-2 text-sm font-medium text-texto">
+          Carrera y año por defecto de los inscriptos (opcional)
+        </p>
+        <p className="mb-3 text-xs text-texto-secundario">
+          Se aplica a toda Persona que se inscriba acá (manual, CSV o Sheets) que todavía no tenga
+          ese dato cargado — nunca pisa un valor existente.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Select label="Carrera" name="carreraPorDefectoId" defaultValue="">
+            <option value="">Sin carrera por defecto</option>
+            {carreras.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre}
+              </option>
+            ))}
+          </Select>
+          <Select label="Año" name="anioPorDefecto" defaultValue="">
+            <option value="">Sin año por defecto</option>
+            {[1, 2, 3, 4, 5, 6].map((a) => (
+              <option key={a} value={a}>
+                Año {a}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
 
       <Textarea label="Observaciones" name="observaciones" />
 

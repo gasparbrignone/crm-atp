@@ -158,6 +158,8 @@ export async function crearActividad(datos: ActividadFormValues, usuarioId: stri
       responsableId: datos.responsableId,
       actividadPadreId: datos.actividadPadreId ?? null,
       observaciones: datos.observaciones ?? null,
+      carreraPorDefectoId: datos.carreraPorDefectoId ?? null,
+      anioPorDefecto: datos.anioPorDefecto ?? null,
       creadoPorId: usuarioId,
       modificadoPorId: usuarioId,
     },
@@ -185,6 +187,8 @@ const CAMPOS_EDITABLES = [
   "responsableId",
   "actividadPadreId",
   "observaciones",
+  "carreraPorDefectoId",
+  "anioPorDefecto",
 ] as const;
 
 // Edición inline por campo, mismo patrón que /lib/servicios/personas.service.ts
@@ -232,6 +236,8 @@ export async function actualizarActividad(
       data.responsable = { connect: { id: nuevo as string } };
     } else if (campo === "actividadPadreId") {
       data.actividadPadre = nuevo ? { connect: { id: nuevo as string } } : { disconnect: true };
+    } else if (campo === "carreraPorDefectoId") {
+      data.carreraPorDefecto = nuevo ? { connect: { id: nuevo as string } } : { disconnect: true };
     } else {
       // @ts-expect-error -- asignación dinámica validada por CAMPOS_EDITABLES
       data[campo] = nuevo;
@@ -254,7 +260,56 @@ export async function actualizarActividad(
     });
   }
 
+  // Si se acaba de definir (o cambiar) la carrera/año por defecto, se
+  // aplica también a quienes ya estaban inscriptos y todavía no tenían ese
+  // dato — no solo a las inscripciones futuras (pedido de Gaspar).
+  if ("carreraPorDefectoId" in cambios || "anioPorDefecto" in cambios) {
+    await aplicarCarreraAnioPorDefectoAParticipantes(id, usuarioId);
+  }
+
   return actualizada;
+}
+
+// Completa carrera/año de quienes ya están inscriptos en esta actividad con
+// los valores por defecto configurados, sin pisar un dato ya cargado (mismo
+// criterio que la importación CSV/Sheets, ver importarParticipacionesCsv).
+export async function aplicarCarreraAnioPorDefectoAParticipantes(
+  actividadId: string,
+  usuarioId: string,
+) {
+  const actividad = await prisma.actividad.findUniqueOrThrow({ where: { id: actividadId } });
+  if (!actividad.carreraPorDefectoId && !actividad.anioPorDefecto) return { actualizadas: 0 };
+
+  const participaciones = await prisma.participacion.findMany({
+    where: { actividadId },
+    select: {
+      persona: { select: { id: true, carreraId: true, anio: true } },
+    },
+  });
+
+  let actualizadas = 0;
+  for (const { persona } of participaciones) {
+    const datosActualizar: { carreraId?: string; anio?: number } = {};
+    if (actividad.carreraPorDefectoId && !persona.carreraId) {
+      datosActualizar.carreraId = actividad.carreraPorDefectoId;
+    }
+    if (actividad.anioPorDefecto && !persona.anio) {
+      datosActualizar.anio = actividad.anioPorDefecto;
+    }
+    if (Object.keys(datosActualizar).length === 0) continue;
+
+    await prisma.persona.update({ where: { id: persona.id }, data: datosActualizar });
+    await registrarCambio({
+      entidad: "Persona",
+      entidadId: persona.id,
+      accion: "editar",
+      usuarioId,
+      metadata: { proceso: "carrera_anio_por_defecto_actividad", actividadId },
+    });
+    actualizadas++;
+  }
+
+  return { actualizadas };
 }
 
 // Cambio de estado — valida transiciones según el ciclo de vida documentado

@@ -34,7 +34,8 @@ export const filtrosPersonasSchema = z.object({
   q: opcional,
   carreraId: opcional,
   anio: opcional,
-  estadoPadron: opcional,
+  estadoPadronCD: opcional,
+  estadoPadronCE: opcional,
   estadoFicha: opcional,
   pagina: z
     .string()

@@ -11,6 +11,7 @@ import { Card } from "@/components/ui/Card";
 import { FilaPendiente } from "@/components/padron/FilaPendiente";
 import { FilaSinCoincidencia } from "@/components/padron/FilaSinCoincidencia";
 import { PanelActivacion } from "@/components/padron/PanelActivacion";
+import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 
 const ETIQUETA_ESTADO: Record<string, string> = {
   borrador: "Borrador",
@@ -61,7 +62,7 @@ export default async function PadronDetallePage({ params }: { params: Promise<{ 
           <div>
             <h1 className="text-lg font-semibold text-texto">{padron.nombre}</h1>
             <p className="text-sm text-texto-secundario">
-              {ETIQUETA_ESTADO[padron.estado]}
+              {ETIQUETA_TIPO_PADRON[padron.tipo]} · {ETIQUETA_ESTADO[padron.estado]}
               {padron.fechaEleccion &&
                 ` · Elección: ${new Date(padron.fechaEleccion).toLocaleDateString("es-AR")}`}
             </p>

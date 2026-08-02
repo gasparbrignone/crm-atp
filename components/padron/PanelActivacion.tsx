@@ -73,8 +73,10 @@ export function PanelActivacion({
       <Modal abierto={modal === "activar"} onCerrar={() => setModal(null)} titulo="Activar este padrón">
         <div className="flex flex-col gap-3">
           <p className="text-sm text-texto-secundario">
-            Esto cierra automáticamente cualquier otro padrón activo y recalcula el estado de
-            padrón de todas las Personas del sistema. No se puede deshacer con un clic.
+            Esto cierra automáticamente cualquier otro padrón activo del mismo tipo (Consejo
+            Directivo o Centro de Estudiantes) y recalcula el estado de padrón correspondiente de
+            todas las Personas del sistema. No afecta al padrón activo del otro tipo. No se puede
+            deshacer con un clic.
           </p>
           {error && (
             <p role="alert" className="text-sm text-error">

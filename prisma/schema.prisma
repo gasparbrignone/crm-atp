@@ -67,6 +67,14 @@ enum EstadoPadronElectoral {
   cerrado
 }
 
+// Dos padrones oficiales distintos y activos en simultáneo durante una
+// elección — ver CLAUDE.md "TAREA EN CURSO" (2026-08-01). Consejo Directivo
+// (CD) es más restrictivo que Centro de Estudiantes (CE); CD ⊂ CE.
+enum TipoPadronElectoral {
+  consejo_directivo
+  centro_estudiantes
+}
+
 enum EstadoMatchingPadron {
   pendiente
   vinculado_automatico
@@ -182,7 +190,11 @@ model Persona {
   anio                   Int?
   instagram              String?
   observacionesGenerales String?
-  estadoPadron           EstadoPadronPersona @default(no_evaluado)
+  // Estado por padrón — CD y CE son padrones distintos que pueden estar
+  // activos a la vez, una persona puede estar habilitada en uno y no en el
+  // otro. Ver CLAUDE.md "TAREA EN CURSO" (2026-08-01).
+  estadoPadronCD         EstadoPadronPersona @default(no_evaluado)
+  estadoPadronCE         EstadoPadronPersona @default(no_evaluado)
   estadoFicha            EstadoFicha         @default(activa)
   fusionadaEnId          String?
   fusionadaEn            Persona?            @relation("PersonaFusion", fields: [fusionadaEnId], references: [id])
@@ -202,7 +214,8 @@ model Persona {
   punteos         PunteoPersona[]
   padronEntradas  PadronEntrada[]
 
-  @@index([carreraId, anio, estadoPadron])
+  @@index([carreraId, anio, estadoPadronCD])
+  @@index([carreraId, anio, estadoPadronCE])
   @@index([apellido, nombre])
 }
 
@@ -448,6 +461,7 @@ model PunteoComentario {
 model PadronElectoral {
   id              String                @id @default(uuid())
   nombre          String
+  tipo            TipoPadronElectoral
   fechaEleccion   DateTime?             @db.Date
   estado          EstadoPadronElectoral @default(borrador)
   archivoOrigenId String?
@@ -458,6 +472,7 @@ model PadronElectoral {
   entradas PadronEntrada[]
 
   @@index([estado])
+  @@index([tipo, estado])
 }
 
 model PadronEntrada {

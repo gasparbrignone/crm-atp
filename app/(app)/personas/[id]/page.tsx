@@ -10,6 +10,7 @@ import { PersonaTabs } from "@/components/personas/PersonaTabs";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
+import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 import {
   ETIQUETA_ESTADO_PARTICIPACION,
   COLOR_ESTADO_PARTICIPACION,
@@ -69,9 +70,14 @@ export default async function PersonaDetallePage({
                 {persona.anio ? ` · Año ${persona.anio}` : ""}
               </span>
               <span
-                className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadron]}`}
+                className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadronCD]}`}
               >
-                {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
+                {ETIQUETA_TIPO_PADRON.consejo_directivo}: {ETIQUETA_ESTADO_PADRON[persona.estadoPadronCD]}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadronCE]}`}
+              >
+                {ETIQUETA_TIPO_PADRON.centro_estudiantes}: {ETIQUETA_ESTADO_PADRON[persona.estadoPadronCE]}
               </span>
               {persona.estadoFicha === "archivada" && (
                 <span className="inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-0.5 text-xs font-medium text-texto-secundario">

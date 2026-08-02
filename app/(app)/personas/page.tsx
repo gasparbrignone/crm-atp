@@ -9,6 +9,7 @@ import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { TablaPersonasSeleccionable } from "@/components/personas/TablaPersonasSeleccionable";
 import { ETIQUETA_ESTADO_PADRON } from "@/lib/utils/persona-labels";
+import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 
 // Listado paginado de Personas — ver /05-modulo-personas.md sección 6.
 export default async function PersonasPage({
@@ -23,7 +24,8 @@ export default async function PersonasPage({
     q: sp.q,
     carreraId: sp.carreraId,
     anio: sp.anio,
-    estadoPadron: sp.estadoPadron,
+    estadoPadronCD: sp.estadoPadronCD,
+    estadoPadronCE: sp.estadoPadronCE,
     estadoFicha: sp.estadoFicha ?? "activa",
     pagina: sp.pagina ? Number(sp.pagina) : 1,
     porPagina: sp.porPagina ? Number(sp.porPagina) : 50,
@@ -97,11 +99,19 @@ export default async function PersonasPage({
               </option>
             ))}
           </Select>
-          <Select name="estadoPadron" defaultValue={sp.estadoPadron ?? ""} className="w-auto">
-            <option value="">Todo estado de padrón</option>
+          <Select name="estadoPadronCD" defaultValue={sp.estadoPadronCD ?? ""} className="w-auto">
+            <option value="">{ETIQUETA_TIPO_PADRON.consejo_directivo}: todos</option>
             {Object.entries(ETIQUETA_ESTADO_PADRON).map(([valor, etiqueta]) => (
               <option key={valor} value={valor}>
-                {etiqueta}
+                {ETIQUETA_TIPO_PADRON.consejo_directivo}: {etiqueta}
+              </option>
+            ))}
+          </Select>
+          <Select name="estadoPadronCE" defaultValue={sp.estadoPadronCE ?? ""} className="w-auto">
+            <option value="">{ETIQUETA_TIPO_PADRON.centro_estudiantes}: todos</option>
+            {Object.entries(ETIQUETA_ESTADO_PADRON).map(([valor, etiqueta]) => (
+              <option key={valor} value={valor}>
+                {ETIQUETA_TIPO_PADRON.centro_estudiantes}: {etiqueta}
               </option>
             ))}
           </Select>

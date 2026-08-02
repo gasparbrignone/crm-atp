@@ -2,6 +2,7 @@ import Link from "next/link";
 import { MdAdd } from "react-icons/md";
 import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { listarPadrones } from "@/lib/servicios/padron.service";
+import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import {
@@ -60,6 +61,7 @@ export default async function PadronPage() {
           <TableHead>
             <tr>
               <TableHeaderCell>Nombre</TableHeaderCell>
+              <TableHeaderCell>Padrón</TableHeaderCell>
               <TableHeaderCell>Fecha de elección</TableHeaderCell>
               <TableHeaderCell>Estado</TableHeaderCell>
               <TableHeaderCell>Entradas</TableHeaderCell>
@@ -77,6 +79,7 @@ export default async function PadronPage() {
                     {p.nombre}
                   </Link>
                 </TableCell>
+                <TableCell>{ETIQUETA_TIPO_PADRON[p.tipo]}</TableCell>
                 <TableCell>
                   {p.fechaEleccion
                     ? new Date(p.fechaEleccion).toLocaleDateString("es-AR")

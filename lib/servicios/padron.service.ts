@@ -6,10 +6,20 @@ import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
 import { leerEntradasPadronPdf } from "@/lib/ia/lectura-padron-pdf";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
+import type { TipoPadronElectoral } from "@prisma/client";
 
-// Padrón electoral — /09-modulo-padron-electoral.md. Un único padrón `activo`
-// a la vez (RN-8): activar uno nuevo cierra el anterior en la misma
-// operación transaccional (sección 9).
+// Padrón electoral — /09-modulo-padron-electoral.md. ATP maneja dos padrones
+// oficiales distintos y activos en simultáneo durante una elección: Consejo
+// Directivo (CD, más restrictivo) y Centro de Estudiantes (CE, más amplio,
+// CD ⊂ CE). RN-8 ("un único activo a la vez") aplica por `tipo`, no
+// globalmente: activar un padrón nuevo cierra el anterior activo del mismo
+// tipo, sin tocar el padrón activo del otro tipo. Decisión con Gaspar,
+// 2026-08-01 — ver CLAUDE.md.
+
+const CAMPO_ESTADO_PADRON_POR_TIPO = {
+  consejo_directivo: "estadoPadronCD",
+  centro_estudiantes: "estadoPadronCE",
+} as const;
 
 export class PadronPendientesSinResolverError extends Error {
   constructor(public cantidad: number) {
@@ -70,12 +80,14 @@ export async function listarEntradasPadron(padronId: string) {
 
 export async function crearPadronElectoral(
   nombre: string,
+  tipo: TipoPadronElectoral,
   fechaEleccion: string | undefined,
   usuarioId: string,
 ) {
   const padron = await prisma.padronElectoral.create({
     data: {
       nombre,
+      tipo,
       fechaEleccion: fechaEleccion ? new Date(fechaEleccion) : null,
       cargadoPorId: usuarioId,
     },
@@ -416,16 +428,25 @@ export async function crearPersonaDesdeEntradaPadron(
   return vincularEntradaManualmente(entradaId, persona.id, usuarioId);
 }
 
-// Activar un padrón: cierra el anterior activo (si había) en la misma
-// transacción (RN-8, sección 9), y recalcula Persona.estado_padron para todo
-// el sistema según la prioridad de la sección 7. Registrado como evento
-// automático (RN-6) asociado a esta activación puntual.
+// Activar un padrón: cierra el anterior activo del mismo `tipo` (si había) en
+// la misma transacción (RN-8 por tipo, sección 9), y recalcula el estado de
+// padrón de ese tipo (estadoPadronCD o estadoPadronCE) para todo el sistema
+// según la prioridad de la sección 7. No toca el estado del otro tipo de
+// padrón. Registrado como evento automático (RN-6) asociado a esta
+// activación puntual.
 export async function activarPadron(padronId: string, usuarioId: string) {
   const resumen = await obtenerResumenPadron(padronId);
   if (resumen.pendiente > 0) throw new PadronPendientesSinResolverError(resumen.pendiente);
 
+  const padronAActivar = await prisma.padronElectoral.findUniqueOrThrow({
+    where: { id: padronId },
+  });
+  const campoEstado = CAMPO_ESTADO_PADRON_POR_TIPO[padronAActivar.tipo];
+
   await prisma.$transaction(async (tx) => {
-    const anteriorActivo = await tx.padronElectoral.findFirst({ where: { estado: "activo" } });
+    const anteriorActivo = await tx.padronElectoral.findFirst({
+      where: { estado: "activo", tipo: padronAActivar.tipo },
+    });
     if (anteriorActivo) {
       await tx.padronElectoral.update({
         where: { id: anteriorActivo.id },
@@ -443,11 +464,11 @@ export async function activarPadron(padronId: string, usuarioId: string) {
 
     await tx.persona.updateMany({
       where: { id: { in: [...idsHabilitados] } },
-      data: { estadoPadron: "en_padron_habilitado" },
+      data: { [campoEstado]: "en_padron_habilitado" },
     });
     await tx.persona.updateMany({
       where: { id: { notIn: [...idsHabilitados] }, estadoFicha: { not: "fusionada" } },
-      data: { estadoPadron: "no_encontrado_en_padron" },
+      data: { [campoEstado]: "no_encontrado_en_padron" },
     });
   });
 
@@ -456,26 +477,30 @@ export async function activarPadron(padronId: string, usuarioId: string) {
     entidadId: padronId,
     accion: "otro",
     usuarioId: null,
-    metadata: { proceso: "activacion_padron", activadoPorId: usuarioId },
+    metadata: { proceso: "activacion_padron", tipo: padronAActivar.tipo, activadoPorId: usuarioId },
   });
 
   return prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
 }
 
 // Cierre manual sin activar un reemplazo (ej. la elección ya ocurrió y todavía
-// no se cargó el próximo padrón) — /09-modulo-padron-electoral.md sección 3:
-// vuelve todo a `no_evaluado` por defecto, ya que la documentación deja
-// explícitamente como decisión pendiente de la organización si en el futuro
-// se prefiere conservar el último estado conocido en vez de resetear.
+// no se cargó el próximo padrón del mismo tipo) —
+// /09-modulo-padron-electoral.md sección 3: vuelve a `no_evaluado` el campo
+// de estado del tipo correspondiente (CD o CE), sin tocar el del otro tipo,
+// ya que la documentación deja explícitamente como decisión pendiente de la
+// organización si en el futuro se prefiere conservar el último estado
+// conocido en vez de resetear.
 export async function cerrarPadron(padronId: string, usuarioId: string) {
   const padron = await prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
   if (padron.estado !== "activo") return padron;
 
+  const campoEstado = CAMPO_ESTADO_PADRON_POR_TIPO[padron.tipo];
+
   await prisma.$transaction(async (tx) => {
     await tx.padronElectoral.update({ where: { id: padronId }, data: { estado: "cerrado" } });
     await tx.persona.updateMany({
-      where: { estadoPadron: { in: ["en_padron_habilitado", "no_encontrado_en_padron"] } },
-      data: { estadoPadron: "no_evaluado" },
+      where: { [campoEstado]: { in: ["en_padron_habilitado", "no_encontrado_en_padron"] } },
+      data: { [campoEstado]: "no_evaluado" },
     });
   });
 
@@ -484,7 +509,7 @@ export async function cerrarPadron(padronId: string, usuarioId: string) {
     entidadId: padronId,
     accion: "otro",
     usuarioId: null,
-    metadata: { proceso: "cierre_padron", cerradoPorId: usuarioId },
+    metadata: { proceso: "cierre_padron", tipo: padron.tipo, cerradoPorId: usuarioId },
   });
 
   return prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });

@@ -3,6 +3,7 @@
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/Input";
+import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
 import { crearPadronAction, type EstadoFormularioPadron } from "../actions";
 
@@ -26,6 +27,13 @@ export function FormularioNuevoPadron() {
         autoFocus
         required
       />
+      <Select label="A qué padrón corresponde" name="tipo" defaultValue="" required>
+        <option value="" disabled>
+          Elegí una opción
+        </option>
+        <option value="consejo_directivo">Consejo Directivo</option>
+        <option value="centro_estudiantes">Centro de Estudiantes</option>
+      </Select>
       <Input label="Fecha de elección (opcional)" name="fechaEleccion" type="date" />
       {estado.error && (
         <p role="alert" className="text-sm text-error">

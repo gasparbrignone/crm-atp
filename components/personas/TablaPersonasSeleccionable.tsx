@@ -15,6 +15,7 @@ import {
   TableEmptyState,
 } from "@/components/ui/Table";
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
+import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 import { inscribirMasivoAction } from "@/app/(app)/actividades/participaciones.actions";
 import type { EstadoPadronPersona } from "@prisma/client";
 
@@ -24,7 +25,8 @@ interface PersonaFila {
   apellido: string;
   dni: string | null;
   anio: number | null;
-  estadoPadron: EstadoPadronPersona;
+  estadoPadronCD: EstadoPadronPersona;
+  estadoPadronCE: EstadoPadronPersona;
   carrera: { nombre: string } | null;
 }
 
@@ -125,7 +127,8 @@ export function TablaPersonasSeleccionable({
             <TableHeaderCell>DNI</TableHeaderCell>
             <TableHeaderCell>Carrera</TableHeaderCell>
             <TableHeaderCell>Año</TableHeaderCell>
-            <TableHeaderCell>Estado de padrón</TableHeaderCell>
+            <TableHeaderCell>{ETIQUETA_TIPO_PADRON.consejo_directivo}</TableHeaderCell>
+            <TableHeaderCell>{ETIQUETA_TIPO_PADRON.centro_estudiantes}</TableHeaderCell>
           </tr>
         </TableHead>
         <TableBody>
@@ -167,9 +170,16 @@ export function TablaPersonasSeleccionable({
               <TableCell>{persona.anio ?? "—"}</TableCell>
               <TableCell>
                 <span
-                  className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadron]}`}
+                  className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadronCD]}`}
                 >
-                  {ETIQUETA_ESTADO_PADRON[persona.estadoPadron]}
+                  {ETIQUETA_ESTADO_PADRON[persona.estadoPadronCD]}
+                </span>
+              </TableCell>
+              <TableCell>
+                <span
+                  className={`inline-flex items-center rounded-full bg-fondo-hover px-2.5 py-1 text-xs font-medium ${COLOR_ESTADO_PADRON[persona.estadoPadronCE]}`}
+                >
+                  {ETIQUETA_ESTADO_PADRON[persona.estadoPadronCE]}
                 </span>
               </TableCell>
             </TableRow>

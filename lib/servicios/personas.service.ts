@@ -19,7 +19,8 @@ export interface FiltrosListadoPersonas {
   q?: string;
   carreraId?: string;
   anio?: string;
-  estadoPadron?: string;
+  estadoPadronCD?: string;
+  estadoPadronCE?: string;
   estadoFicha?: string;
   pagina?: number;
   porPagina?: number;
@@ -39,7 +40,10 @@ export async function listarPersonas(filtros: FiltrosListadoPersonas) {
   };
   if (filtros.carreraId) where.carreraId = filtros.carreraId;
   if (filtros.anio) where.anio = Number(filtros.anio);
-  if (filtros.estadoPadron) where.estadoPadron = filtros.estadoPadron as Persona["estadoPadron"];
+  if (filtros.estadoPadronCD)
+    where.estadoPadronCD = filtros.estadoPadronCD as Persona["estadoPadronCD"];
+  if (filtros.estadoPadronCE)
+    where.estadoPadronCE = filtros.estadoPadronCE as Persona["estadoPadronCE"];
   if (filtros.q) {
     const q = filtros.q.trim();
     where.OR = [

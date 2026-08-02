@@ -193,10 +193,13 @@ async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMat
 // razón de 1-2 round-trips a la base por fila, eso solo ya puede superar el
 // límite de 300s de la función serverless de Vercel (timeout real observado
 // en producción, 2026-08-01, con el padrón de Medicina). Se resuelve el
-// matching de todas las filas en paralelo (con límite de concurrencia, mismo
-// motivo que en lectura-padron-pdf.ts) y se inserta todo con un único
-// `createMany` al final en vez de un `create` por fila.
-const CONCURRENCIA_MATCHING = 20;
+// matching de todas las filas en paralelo (con límite de concurrencia) y se
+// inserta todo con un único `createMany` al final en vez de un `create` por
+// fila. La mayoría de las filas no llaman a la IA (solo cuando hay candidato
+// por nombre — la mayoría son sin_coincidencia, resuelto solo con consultas a
+// la base), pero la concurrencia igual queda acotada por la cuota gratuita de
+// Gemini (RPM bajo, migración 2026-08-02, ver /15-ia.md sección 8).
+const CONCURRENCIA_MATCHING = 4;
 
 interface FilaPadronParaProcesar {
   numeroFila: number;

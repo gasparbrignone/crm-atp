@@ -85,6 +85,17 @@ export async function obtenerPersona(id: string) {
   });
 }
 
+// Usado tanto para mostrar la sugerencia de duplicado en el alta manual como
+// para la comparación lado a lado del flujo de fusión (/05-modulo-personas.md
+// secciones 3.2 y 8.2) — en ambos casos hace falta el detalle completo de
+// más de una Persona a la vez.
+export async function obtenerPersonasPorIds(ids: string[]) {
+  return prisma.persona.findMany({
+    where: { id: { in: ids } },
+    include: { carrera: true, telefonos: true, emails: true },
+  });
+}
+
 async function buscarPorDniActivoOArchivado(dni: string) {
   return prisma.persona.findFirst({
     where: { dni, estadoFicha: { not: "fusionada" } },
@@ -225,4 +236,193 @@ export async function restaurarPersona(id: string, usuarioId: string) {
   });
   await registrarCambio({ entidad: "Persona", entidadId: id, accion: "restaurar", usuarioId });
   return persona;
+}
+
+export type CampoFusionable =
+  | "nombre"
+  | "apellido"
+  | "dni"
+  | "legajo"
+  | "carreraId"
+  | "anio"
+  | "instagram"
+  | "observacionesGenerales";
+
+export interface FusionarPersonasInput {
+  personaDefinitivaId: string;
+  personaDescartadaId: string;
+  camposElegidos: Partial<Record<CampoFusionable, "definitiva" | "descartada">>;
+  usuarioId: string;
+}
+
+export class PersonaYaFusionadaError extends Error {
+  constructor() {
+    super("Una de las dos fichas ya fue fusionada anteriormente.");
+    this.name = "PersonaYaFusionadaError";
+  }
+}
+
+const CAMPOS_FUSIONABLES: CampoFusionable[] = [
+  "nombre",
+  "apellido",
+  "dni",
+  "legajo",
+  "carreraId",
+  "anio",
+  "instagram",
+  "observacionesGenerales",
+];
+
+// Fusión de duplicados — /05-modulo-personas.md sección 8.2 y RN-2
+// (/04-modelo-datos.md sección 18). Nunca automática: siempre confirmada por
+// un usuario campo por campo (deteccion-duplicados.ts solo sugiere, nunca
+// fusiona solo — /15-ia.md sección 2.3). La ficha descartada pasa a
+// `fusionada` (nunca se borra físicamente) y su Participacion/PunteoPersona/
+// HistorialCambio se re-vincula a la definitiva. Cuando re-vincular una
+// Participacion o un PunteoPersona chocaría con una fila que la definitiva ya
+// tiene (misma Actividad, o mismo usuario de punteo), se aplica el mismo
+// criterio que RN-4 para re-inscripciones: se conserva la fila de la
+// definitiva y la de la descartada se descarta sin crear un duplicado — los
+// comentarios de punteo igual se re-vinculan siempre, nunca se pierden.
+export async function fusionarPersonas(input: FusionarPersonasInput) {
+  const { personaDefinitivaId, personaDescartadaId, camposElegidos, usuarioId } = input;
+
+  if (personaDefinitivaId === personaDescartadaId) {
+    throw new Error("No se puede fusionar una ficha consigo misma.");
+  }
+
+  const [definitiva, descartada] = await Promise.all([
+    prisma.persona.findUniqueOrThrow({
+      where: { id: personaDefinitivaId },
+      include: { telefonos: true, emails: true },
+    }),
+    prisma.persona.findUniqueOrThrow({
+      where: { id: personaDescartadaId },
+      include: { telefonos: true, emails: true },
+    }),
+  ]);
+
+  if (definitiva.estadoFicha === "fusionada" || descartada.estadoFicha === "fusionada") {
+    throw new PersonaYaFusionadaError();
+  }
+
+  const dataActualizacion: Prisma.PersonaUpdateInput = {};
+  for (const campo of CAMPOS_FUSIONABLES) {
+    if (camposElegidos[campo] !== "descartada") continue;
+    const valor = descartada[campo];
+    if (campo === "carreraId") {
+      dataActualizacion.carrera = valor ? { connect: { id: valor as string } } : { disconnect: true };
+    } else {
+      // @ts-expect-error -- asignación dinámica validada por CAMPOS_FUSIONABLES
+      dataActualizacion[campo] = valor;
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (Object.keys(dataActualizacion).length > 0) {
+      await tx.persona.update({ where: { id: personaDefinitivaId }, data: dataActualizacion });
+    }
+
+    // Contactos: se mueven todos a la definitiva. RN-3 exige un único
+    // es_principal por tipo — si ambas fichas ya tenían uno marcado, se
+    // conserva el de la definitiva y se desmarca el que llega de la fusión.
+    const yaTieneTelefonoPrincipal = definitiva.telefonos.some((t) => t.esPrincipal);
+    for (const telefono of descartada.telefonos) {
+      await tx.personaTelefono.update({
+        where: { id: telefono.id },
+        data: {
+          personaId: personaDefinitivaId,
+          esPrincipal: telefono.esPrincipal && !yaTieneTelefonoPrincipal,
+        },
+      });
+    }
+    const yaTieneEmailPrincipal = definitiva.emails.some((e) => e.esPrincipal);
+    for (const email of descartada.emails) {
+      await tx.personaEmail.update({
+        where: { id: email.id },
+        data: {
+          personaId: personaDefinitivaId,
+          esPrincipal: email.esPrincipal && !yaTieneEmailPrincipal,
+        },
+      });
+    }
+
+    const participacionesDescartada = await tx.participacion.findMany({
+      where: { personaId: personaDescartadaId },
+    });
+    for (const participacion of participacionesDescartada) {
+      const colision = await tx.participacion.findUnique({
+        where: {
+          personaId_actividadId: {
+            personaId: personaDefinitivaId,
+            actividadId: participacion.actividadId,
+          },
+        },
+      });
+      if (colision) {
+        await tx.participacion.delete({ where: { id: participacion.id } });
+      } else {
+        await tx.participacion.update({
+          where: { id: participacion.id },
+          data: { personaId: personaDefinitivaId },
+        });
+      }
+    }
+
+    const punteosDescartada = await tx.punteoPersona.findMany({
+      where: { personaId: personaDescartadaId },
+    });
+    for (const punteo of punteosDescartada) {
+      const colision = await tx.punteoPersona.findUnique({
+        where: {
+          usuarioId_personaId: { usuarioId: punteo.usuarioId, personaId: personaDefinitivaId },
+        },
+      });
+      if (colision) {
+        await tx.punteoComentario.updateMany({
+          where: { punteoPersonaId: punteo.id },
+          data: { punteoPersonaId: colision.id },
+        });
+        await tx.punteoPersona.delete({ where: { id: punteo.id } });
+      } else {
+        await tx.punteoPersona.update({
+          where: { id: punteo.id },
+          data: { personaId: personaDefinitivaId },
+        });
+      }
+    }
+
+    // Entradas de padrón ya vinculadas a la descartada se re-vinculan para no
+    // dejarlas apuntando a una ficha fusionada.
+    await tx.padronEntrada.updateMany({
+      where: { personaId: personaDescartadaId },
+      data: { personaId: personaDefinitivaId },
+    });
+
+    // Historial de la descartada se re-vincula a la definitiva para no
+    // perder la traza (RN-2).
+    await tx.historialCambio.updateMany({
+      where: { entidad: "Persona", entidadId: personaDescartadaId },
+      data: { entidadId: personaDefinitivaId },
+    });
+
+    await tx.persona.update({
+      where: { id: personaDescartadaId },
+      data: {
+        estadoFicha: "fusionada",
+        fusionadaEnId: personaDefinitivaId,
+        modificadoPorId: usuarioId,
+      },
+    });
+  });
+
+  await registrarCambio({
+    entidad: "Persona",
+    entidadId: personaDefinitivaId,
+    accion: "fusionar",
+    usuarioId,
+    metadata: { personaDescartadaId, camposElegidos },
+  });
+
+  return prisma.persona.findUniqueOrThrow({ where: { id: personaDefinitivaId } });
 }

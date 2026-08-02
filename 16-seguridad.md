@@ -87,17 +87,17 @@ Como consecuencia directa de la sección 5, el módulo de punteo (ver [`08-modul
 
 ## 8. Gestión de secretos y credenciales
 
-- Ninguna credencial (claves de Supabase, clave de API de Anthropic) se incluye en el código fuente ni en el repositorio, bajo ninguna circunstancia — se gestionan como variables de entorno en Vercel, separadas por entorno (desarrollo/preview/producción).
+- Ninguna credencial (claves de Supabase, clave de API de Gemini) se incluye en el código fuente ni en el repositorio, bajo ninguna circunstancia — se gestionan como variables de entorno en Vercel, separadas por entorno (desarrollo/preview/producción).
 - La *service role key* de Supabase (con capacidad de saltear RLS) se usa exclusivamente en procesos de servidor estrictamente necesarios (por ejemplo, la escritura en `HistorialCambio` desde la capa de servicios) y nunca se expone al cliente ni se usa como credencial general de la aplicación.
 - Rotación de credenciales ante sospecha de exposición: procedimiento documentado y probado al menos una vez antes de ir a producción (no dejarlo como ejercicio teórico).
 
 ## 9. Minimización de datos hacia servicios de IA externos
 
-Dado que varias funcionalidades de [`15-ia.md`](./15-ia.md) envían datos a la API de Anthropic:
+Dado que varias funcionalidades de [`15-ia.md`](./15-ia.md) envían datos a la API de Gemini:
 
 - Los procesos de **insights** (sección 6 de `15-ia.md`) envían agregados estadísticos, no listados de personas identificables, salvo que la funcionalidad puntual lo requiera de forma inherente (por ejemplo, la lectura de un PDF de padrón necesariamente procesa datos identificables de cada fila, porque esa es la naturaleza de la tarea).
 - El **chatbot** solo accede a datos dentro del alcance de permisos del usuario que pregunta (ver [`15-ia.md`](./15-ia.md#73-el-chatbot-respeta-los-mismos-permisos-que-el-resto-del-sistema)), nunca a la base completa sin ese filtro.
-- Se recomienda revisar los términos de tratamiento de datos y retención de la API de Anthropic vigentes al momento de la implementación, como parte del checklist de la sección 13.
+- Se recomienda revisar los términos de tratamiento de datos y retención de la API de Gemini vigentes al momento de la implementación, como parte del checklist de la sección 13.
 
 ## 10. Backups y recuperación ante desastres
 

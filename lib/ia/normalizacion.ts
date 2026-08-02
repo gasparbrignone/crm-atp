@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
+import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
 
 // Normalización de datos — /15-ia.md sección 3. Se aplica automáticamente al
 // guardar, no como paso separado que el usuario deba disparar. La mayoría de
@@ -109,17 +109,19 @@ ${JSON.stringify(carreras.map((c) => ({ id: c.id, nombre: c.nombre })))}
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"carreraId": "<id de la carrera o null>", "confianza": <número entre 0 y 1>}`;
 
-  const cliente = obtenerClienteAnthropic();
-  const respuesta = await cliente.messages.create({
-    model: MODELO_IA_LIVIANO,
-    max_tokens: 150,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const cliente = obtenerClienteIA();
+  const respuesta = await generarConReintentos(() =>
+    cliente.models.generateContent({
+      model: MODELO_IA_LIVIANO,
+      contents: prompt,
+      config: { maxOutputTokens: 150, responseMimeType: "application/json" },
+    }),
+  );
 
-  const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") return undefined;
+  const texto2 = respuesta.text;
+  if (!texto2) return undefined;
 
-  const json = extraerJson(bloqueTexto.text) as
+  const json = extraerJson(texto2) as
     | { carreraId: string | null; confianza: number }
     | null;
   if (!json || typeof json.confianza !== "number" || !json.carreraId) return undefined;

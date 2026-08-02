@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
+import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
 
 // Detección de duplicados — /15-ia.md sección 2. Señales por orden de
 // confianza (sección 2.2): DNI/legajo idéntico (determinístico, no
@@ -157,12 +157,14 @@ Considerá errores de tipeo, variantes de escritura (acentos, "Gonzalez"/"Gonzá
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"personaId": "<id de la candidata o null>", "confianza": <número entre 0 y 1>, "motivo": "<explicación breve en español>"}`;
 
-  const cliente = obtenerClienteAnthropic();
-  const respuesta = await cliente.messages.create({
-    model: MODELO_IA_LIVIANO,
-    max_tokens: 300,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const cliente = obtenerClienteIA();
+  const respuesta = await generarConReintentos(() =>
+    cliente.models.generateContent({
+      model: MODELO_IA_LIVIANO,
+      contents: prompt,
+      config: { maxOutputTokens: 300, responseMimeType: "application/json" },
+    }),
+  );
 
   const candidatosParaMostrar: CandidatoAmbiguo[] = candidatos.map((c) => ({
     id: c.id,
@@ -171,8 +173,8 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     telefono: c.telefonos[0] ?? null,
   }));
 
-  const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") {
+  const texto = respuesta.text;
+  if (!texto) {
     return {
       tipo: "ambiguo",
       motivo: "No se pudo interpretar la respuesta de la IA.",
@@ -180,7 +182,7 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     };
   }
 
-  const json = extraerJson(bloqueTexto.text) as
+  const json = extraerJson(texto) as
     | { personaId: string | null; confianza: number; motivo: string }
     | null;
 

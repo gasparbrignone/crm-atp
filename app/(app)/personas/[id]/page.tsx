@@ -6,6 +6,7 @@ import { obtenerPersona } from "@/lib/servicios/personas.service";
 import { listarParticipacionesDePersona } from "@/lib/servicios/participaciones.service";
 import { prisma } from "@/lib/prisma/client";
 import { CampoEditable } from "@/components/personas/CampoEditable";
+import { BuscarDuplicadoFusion } from "@/components/personas/BuscarDuplicadoFusion";
 import { PersonaTabs } from "@/components/personas/PersonaTabs";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -25,11 +26,12 @@ export default async function PersonaDetallePage({
   await requerirPermiso("personas.ver");
   const { id } = await params;
 
-  const [persona, carreras, puedeEditar, puedeArchivar, participaciones] = await Promise.all([
+  const [persona, carreras, puedeEditar, puedeArchivar, puedeFusionar, participaciones] = await Promise.all([
     obtenerPersona(id),
     prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
     tienePermiso("personas.editar"),
     tienePermiso("personas.archivar"),
+    tienePermiso("personas.fusionar_duplicados"),
     listarParticipacionesDePersona(id),
   ]);
 
@@ -192,6 +194,11 @@ export default async function PersonaDetallePage({
                     accion={actualizarCampoPersonaAction}
                   />
                 </div>
+                {puedeFusionar && persona.estadoFicha !== "fusionada" && (
+                  <div className="sm:col-span-2">
+                    <BuscarDuplicadoFusion personaId={persona.id} />
+                  </div>
+                )}
               </div>
             ),
           },

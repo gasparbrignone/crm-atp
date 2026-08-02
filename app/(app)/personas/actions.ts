@@ -8,14 +8,32 @@ import {
   actualizarPersona,
   archivarPersona,
   restaurarPersona,
+  obtenerPersonasPorIds,
   DniDuplicadoError,
 } from "@/lib/servicios/personas.service";
+import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import {
+  buscarPersonaCoincidente,
+  obtenerUmbralConfianzaDuplicados,
+} from "@/lib/ia/deteccion-duplicados";
 import { personaFormSchema } from "@/lib/validaciones/persona.validation";
+
+export interface CandidatoDuplicadoVista {
+  id: string;
+  nombre: string;
+  apellido: string;
+  dni: string | null;
+  telefono: string | null;
+  email: string | null;
+  carrera: string | null;
+}
 
 export interface EstadoFormularioPersona {
   error?: string;
   personaExistenteId?: string;
   erroresCampo?: Record<string, string>;
+  candidatos?: CandidatoDuplicadoVista[];
+  motivoSugerencia?: string;
 }
 
 function datosDeFormulario(formData: FormData) {
@@ -33,6 +51,16 @@ function datosDeFormulario(formData: FormData) {
   };
 }
 
+// Alta manual con verificación de duplicados — /05-modulo-personas.md sección
+// 3.2. El DNI exacto sigue siendo un bloqueo duro (RN de la sección 9, ya
+// resuelto por crearPersona() más abajo, que lanza DniDuplicadoError): ahí la
+// coincidencia es una certeza, no una sugerencia, así que no pasa por este
+// flujo de comparación. Cualquier otra señal (teléfono idéntico, nombre muy
+// similar) pasa por buscarPersonaCoincidente() y, si hay candidato(s), el
+// formulario se resuelve en dos pasos: primero se muestra la sugerencia sin
+// crear nada, después el usuario confirma "es distinta" (se crea igual y
+// queda registrado el descarte) o "es la misma" (se crea la ficha nueva y se
+// redirige al flujo de fusión de la sección 8.2 contra el candidato elegido).
 export async function crearPersonaAction(
   _estadoPrevio: EstadoFormularioPersona,
   formData: FormData,
@@ -48,6 +76,64 @@ export async function crearPersonaAction(
     return { error: "Revisá los campos marcados.", erroresCampo };
   }
 
+  const accionDuplicado = String(formData.get("accionDuplicado") ?? "");
+  const yaResueltoPorElUsuario = accionDuplicado === "confirmar_distinta" || accionDuplicado === "fusionar";
+  const personaCandidataId = String(formData.get("personaCandidataId") ?? "") || undefined;
+
+  if (!yaResueltoPorElUsuario) {
+    const umbral = await obtenerUmbralConfianzaDuplicados();
+    const resultado = await buscarPersonaCoincidente(
+      {
+        nombre: parsed.data.nombre,
+        apellido: parsed.data.apellido,
+        telefono: parsed.data.telefono || undefined,
+        email: parsed.data.email || undefined,
+        dni: parsed.data.dni || undefined,
+      },
+      umbral,
+    );
+
+    // confianza === 1 solo puede venir de un DNI idéntico — ese caso se deja
+    // pasar a crearPersona() para el bloqueo duro existente (DniDuplicadoError),
+    // no a la sugerencia editable.
+    if (resultado.tipo === "coincidencia" && resultado.confianza < 1) {
+      const [candidato] = await obtenerPersonasPorIds([resultado.personaId]);
+      if (candidato) {
+        return {
+          motivoSugerencia: resultado.motivo,
+          candidatos: [
+            {
+              id: candidato.id,
+              nombre: candidato.nombre,
+              apellido: candidato.apellido,
+              dni: candidato.dni,
+              telefono: candidato.telefonos.find((t) => t.esPrincipal)?.numero ?? null,
+              email: candidato.emails.find((e) => e.esPrincipal)?.email ?? null,
+              carrera: candidato.carrera?.nombre ?? null,
+            },
+          ],
+        };
+      }
+    }
+
+    if (resultado.tipo === "ambiguo" && resultado.candidatos.length > 0) {
+      const idsCandidatos = resultado.candidatos.slice(0, 5).map((c) => c.id);
+      const candidatosCompletos = await obtenerPersonasPorIds(idsCandidatos);
+      return {
+        motivoSugerencia: resultado.motivo,
+        candidatos: candidatosCompletos.map((c) => ({
+          id: c.id,
+          nombre: c.nombre,
+          apellido: c.apellido,
+          dni: c.dni,
+          telefono: c.telefonos.find((t) => t.esPrincipal)?.numero ?? null,
+          email: c.emails.find((e) => e.esPrincipal)?.email ?? null,
+          carrera: c.carrera?.nombre ?? null,
+        })),
+      };
+    }
+  }
+
   let personaId: string;
   try {
     const persona = await crearPersona(parsed.data, usuario.id);
@@ -59,7 +145,26 @@ export async function crearPersonaAction(
     throw error;
   }
 
+  if (accionDuplicado === "confirmar_distinta" && personaCandidataId) {
+    await registrarCambio({
+      entidad: "Persona",
+      entidadId: personaId,
+      accion: "otro",
+      usuarioId: usuario.id,
+      metadata: {
+        proceso: "deteccion_duplicados_alta",
+        candidatoDescartadoId: personaCandidataId,
+        resultado: "confirmado_distinta",
+      },
+    });
+  }
+
   revalidatePath("/personas");
+
+  if (accionDuplicado === "fusionar" && personaCandidataId) {
+    redirect(`/personas/fusionar/${personaCandidataId}/${personaId}`);
+  }
+
   redirect(`/personas/${personaId}`);
 }
 

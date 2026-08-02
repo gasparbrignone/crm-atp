@@ -39,7 +39,7 @@ La aplicación se construye sobre **Next.js con App Router**, usando **React Ser
 | **Prisma ORM** | Capa de acceso a datos y migraciones | Tipado automático generado desde el *schema*, migraciones versionadas y legibles, y una única fuente de verdad del modelo de datos que se mantiene sincronizada con el código |
 | **Supabase (Auth + Database + Storage)** | Backend as a Service: aloja el Postgres, resuelve autenticación y almacenamiento de archivos | Evita operar infraestructura propia de auth y storage; Row Level Security nativo de Postgres se aprovecha como segunda capa de seguridad (ver [`16-seguridad.md`](./16-seguridad.md)) |
 | **Vercel** | Hosting y CI/CD | Integración nativa con Next.js, *preview deployments* por *pull request*, escalado automático |
-| **API de Anthropic (Claude)** | Todas las funcionalidades de IA (ver [`15-ia.md`](./15-ia.md)) | Capacidad nativa de lectura de PDFs e imágenes (relevante para padrones escaneados), *tool use* para el chatbot con acceso controlado a datos, coherencia con el resto del ecosistema de herramientas ya usado por la organización |
+| **API de Gemini (Google AI Studio)** | Todas las funcionalidades de IA (ver [`15-ia.md`](./15-ia.md)) | Cuota gratuita suficiente para el volumen real de ATP — proveedor original era Anthropic, migrado el 2026-08-02 (supuesto S6, ver [`01-vision-alcance.md`](./01-vision-alcance.md#9-supuestos-y-decisiones-abiertas)) tras quedarse sin saldo en medio de una carga real de padrón |
 
 ## 3. Arquitectura general (vista lógica)
 
@@ -84,8 +84,9 @@ La aplicación se construye sobre **Next.js con App Router**, usando **React Ser
                             │
                             ▼
                  ┌───────────────────────┐
-                 │   API de Anthropic     │
-                 │   (Claude) — IA        │
+                 │   API de Gemini        │
+                 │   (Google AI Studio)   │
+                 │   — IA                 │
                  └───────────────────────┘
 ```
 
@@ -93,7 +94,7 @@ Puntos clave de esta vista:
 
 - Toda mutación de datos pasa por la **capa de servicios**, nunca directamente desde un componente de UI a Prisma. Esto es lo que permite, por ejemplo, que la lógica de "solo el dueño del punteo o un Administrador puede editar este comentario" viva en un único lugar y no se reimplemente en cada pantalla.
 - **RLS en Postgres es una segunda capa, no la única.** La autorización se valida primero en la capa de servicios (con el permiso del usuario autenticado), y las políticas de RLS actúan como red de seguridad ante un eventual error de lógica en la aplicación. Ver el detalle en [`16-seguridad.md`](./16-seguridad.md).
-- La API de Anthropic se invoca **siempre desde el servidor** (Server Actions o servicios), nunca desde el cliente, para no exponer credenciales y para poder aplicar el mismo control de permisos que al resto del sistema.
+- La API de Gemini se invoca **siempre desde el servidor** (Server Actions o servicios), nunca desde el cliente, para no exponer credenciales y para poder aplicar el mismo control de permisos que al resto del sistema.
 
 ## 4. Estructura de carpetas
 
@@ -151,7 +152,7 @@ Estructura de referencia para el repositorio. Es la organización que debe usars
 │   │   ├── notificaciones.service.ts
 │   │   └── busqueda.service.ts
 │   ├── ia/
-│   │   ├── cliente-anthropic.ts
+│   │   ├── cliente-ia.ts
 │   │   ├── deteccion-duplicados.ts
 │   │   ├── normalizacion.ts
 │   │   ├── lectura-padron.ts
@@ -173,7 +174,7 @@ Estructura de referencia para el repositorio. Es la organización que debe usars
 
 - Un componente dentro de `components/personas/` puede importar de `lib/servicios/personas.service.ts`, pero **nunca al revés**: la capa de servicios no debe importar nada de `components/` ni de `app/`.
 - Ningún archivo dentro de `app/` llama a Prisma directamente. Siempre pasa por `lib/servicios/*`.
-- Todo lo relacionado con IA vive en `lib/ia/`, con una única puerta de entrada (`cliente-anthropic.ts`) para la configuración del cliente de la API, de forma que cambiar de modelo o de configuración (por ejemplo, límites de tokens) se hace en un solo lugar.
+- Todo lo relacionado con IA vive en `lib/ia/`, con una única puerta de entrada (`cliente-ia.ts`) para la configuración del cliente de la API, de forma que cambiar de modelo o de configuración (por ejemplo, límites de tokens) se hace en un solo lugar.
 
 ## 5. Capas y responsabilidades
 
@@ -182,7 +183,7 @@ Estructura de referencia para el repositorio. Es la organización que debe usars
 | **UI (`app/`, `components/`)** | Renderizar datos, capturar interacción del usuario, invocar Server Actions | Contener reglas de negocio, decidir permisos, construir queries |
 | **Server Actions / rutas** | Punto de entrada de las mutaciones y lecturas iniciadas por el usuario; valida sesión y delega en servicios | Contener lógica de negocio extensa (debe delegar a `lib/servicios`) |
 | **Servicios (`lib/servicios/`)** | Lógica de negocio: reglas de validación, verificación de permisos, orquestación de múltiples entidades, registro de auditoría | Conocer detalles de la UI |
-| **IA (`lib/ia/`)** | Construcción de prompts, llamadas a la API de Anthropic, parseo de respuestas estructuradas | Tomar decisiones finales sobre datos sin pasar por un servicio que aplique las reglas de negocio (por ejemplo, un duplicado sugerido por IA se persiste a través de `personas.service.ts`, no directamente desde `lib/ia`) |
+| **IA (`lib/ia/`)** | Construcción de prompts, llamadas a la API de Gemini, parseo de respuestas estructuradas | Tomar decisiones finales sobre datos sin pasar por un servicio que aplique las reglas de negocio (por ejemplo, un duplicado sugerido por IA se persiste a través de `personas.service.ts`, no directamente desde `lib/ia`) |
 | **Acceso a datos (Prisma)** | Ejecutar consultas tipadas contra PostgreSQL | Contener lógica de negocio |
 | **Base de datos (PostgreSQL/Supabase)** | Persistencia, integridad referencial, RLS como segunda capa de autorización | — |
 

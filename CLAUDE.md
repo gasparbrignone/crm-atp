@@ -23,7 +23,7 @@ Dos tipos de "persona" que nunca hay que confundir:
 | Base de datos | PostgreSQL vía Supabase |
 | ORM | Prisma (única vía de acceso a datos — nunca SQL manual fuera de `prisma/schema.prisma` y migraciones) |
 | Auth / Storage | Supabase Auth + Supabase Storage |
-| IA | API de Anthropic (Claude), invocada siempre desde el servidor |
+| IA | API de Gemini (Google AI Studio), invocada siempre desde el servidor — migrado desde Anthropic el 2026-08-02, ver sección 7 (S6) |
 | Deploy | Vercel, con preview deployments por rama |
 
 Detalle completo y justificación en `03-arquitectura.md`.
@@ -61,7 +61,7 @@ Detalle completo y justificación en `03-arquitectura.md`.
 │   │   ├── importaciones.service.ts exportaciones.service.ts
 │   │   ├── auditoria.service.ts notificaciones.service.ts busqueda.service.ts
 │   ├── ia/
-│   │   ├── cliente-anthropic.ts    # única puerta de entrada a la API de Anthropic
+│   │   ├── cliente-ia.ts           # única puerta de entrada a la API de Gemini
 │   │   ├── deteccion-duplicados.ts normalizacion.ts lectura-padron.ts chatbot.ts insights.ts
 │   ├── validaciones/               # esquemas de validación por entidad
 │   └── utils/
@@ -74,7 +74,7 @@ Detalle completo y justificación en `03-arquitectura.md`.
 - `components/` puede importar de `lib/servicios/*`. Nunca al revés.
 - Nada en `app/` llama a Prisma directamente — siempre pasa por `lib/servicios/*`.
 - Toda mutación de datos pasa por la capa de servicios, nunca directo de UI a Prisma.
-- Todo lo de IA vive en `lib/ia/`, con `cliente-anthropic.ts` como única puerta de configuración del cliente.
+- Todo lo de IA vive en `lib/ia/`, con `cliente-ia.ts` como única puerta de configuración del cliente.
 - Cada servicio en `lib/servicios/` corresponde 1 a 1 con un módulo funcional documentado (ver tabla en `03-arquitectura.md` sección 6).
 
 ## 3.0 Nota: migraciones que usan `auth.*`/`storage.*` (Supabase) rompen el flujo normal de Prisma
@@ -142,7 +142,7 @@ De `01-vision-alcance.md` sección 9 — si alguno se corrige, hay que propagar 
 - S3: un usuario tiene un único rol principal (no roles múltiples).
 - S4: volumen esperado de Personas del orden de miles, no decenas de miles.
 - S5: una `Actividad` puede tener una `Actividad` padre opcional.
-- S6: el proveedor de IA es la API de Anthropic (Claude) para todas las funcionalidades de IA.
+- S6: el proveedor de IA es la API de Gemini (Google AI Studio) para todas las funcionalidades de IA — **corregido 2026-08-02**, era Anthropic (Claude) hasta que la cuenta se quedó sin saldo en medio de la carga real de un padrón. Gemini tiene cuota gratuita suficiente para el volumen real de ATP. `GEMINI_API_KEY` en `.env.local` y en las variables de entorno de Vercel (conseguir en https://aistudio.google.com/apikey). Modelo usado: `gemini-2.5-flash` (ver `lib/ia/cliente-ia.ts`).
 
 ## 8. Cómo navegar el resto de `/docs` (raíz del repo) según lo que se esté implementando
 

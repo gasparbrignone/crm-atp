@@ -1,4 +1,4 @@
-import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
+import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
 
 // Lectura automática de padrones en PDF — /15-ia.md sección 4 y
 // /09-modulo-padron-electoral.md sección 4. Los padrones que carga ATP son
@@ -21,24 +21,23 @@ import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-ant
 // aislamiento para que un problema futuro de esta dependencia quede acotado
 // a esta única acción.
 
-// ~90 filas de padrón por lote (a ~65 caracteres por fila) — deja margen
-// generoso para que la respuesta en JSON nunca se acerque al límite de
-// salida, evitando el bug de truncamiento silencioso ya sufrido con lotes
-// más grandes.
-const CARACTERES_POR_LOTE = 6000;
-const MAX_TOKENS_LECTURA = 8192;
+// Lotes grandes (~6-7 páginas cada uno) en vez de ~1 página por lote: al
+// migrar de Anthropic a Gemini (2026-08-02, cuenta de Anthropic sin saldo)
+// la cuota gratuita de Google AI Studio limita por cantidad de *requests* por
+// minuto (RPM) mucho más que por tokens — con un padrón real de decenas de
+// páginas, más vale mandar pocos lotes grandes que muchos lotes chicos.
+// gemini-2.5-flash soporta hasta 65.536 tokens de salida; se deja margen
+// generoso por debajo de eso para no repetir el bug de truncamiento
+// silencioso ya sufrido con Anthropic.
+const CARACTERES_POR_LOTE = 24000;
+const MAX_TOKENS_LECTURA = 32768;
 
-// Padrones reales de ATP corren decenas de páginas (~1 lote por página, ver
-// medición 2026-08-01: Medicina dio 79 lotes) — leerlos en serie superaba el
-// límite de 300s de la función serverless de Vercel (timeout real observado
-// en producción, no hipotético). Se procesan en paralelo, pero el límite de
-// concurrencia está acotado por el rate limit real de la cuenta de Anthropic
-// (80.000 tokens de salida por minuto para Haiku, observado en producción
-// 2026-08-02): con MAX_TOKENS_LECTURA=8192 por lote, más de ~9 lotes en
-// simultáneo ya reservan más de ese cupo y disparan 429. Se deja margen para
-// que el matching (padron.service.ts) también pueda usar Haiku en paralelo
-// sin competir por todo el cupo.
-const CONCURRENCIA_LECTURA = 7;
+// Concurrencia conservadora: la cuota gratuita de Gemini es baja en RPM
+// (bastante más baja que el límite de Anthropic que motivó la paralelización
+// original) — hasta tener un uso real medido contra la cuenta de Gaspar, se
+// prefiere subestimar la concurrencia y confiar en los reintentos con
+// backoff (generarConReintentos) para picos puntuales.
+const CONCURRENCIA_LECTURA = 4;
 
 export interface EntradaExtraidaPdf {
   dni: string | null;
@@ -105,16 +104,12 @@ function agruparEnLotes(textoPorPagina: string[]): string[] {
 }
 
 async function leerLoteTexto(texto: string, numeroLote: number): Promise<EntradaExtraidaPdf[]> {
-  const cliente = obtenerClienteAnthropic();
+  const cliente = obtenerClienteIA();
 
-  const respuesta = await cliente.messages.create(
-    {
+  const respuesta = await generarConReintentos(() =>
+    cliente.models.generateContent({
       model: MODELO_IA_LIVIANO,
-      max_tokens: MAX_TOKENS_LECTURA,
-      messages: [
-        {
-          role: "user",
-          content: `Este es texto extraído de un padrón electoral universitario (listado de personas habilitadas para votar), tal como aparece en el PDF original — el orden de lectura por columna puede venir levemente desordenado.
+      contents: `Este es texto extraído de un padrón electoral universitario (listado de personas habilitadas para votar), tal como aparece en el PDF original — el orden de lectura por columna puede venir levemente desordenado.
 
 Texto:
 ${texto}
@@ -123,29 +118,26 @@ Extraé cada fila de persona. Para cada una: DNI (o null si no está o no es leg
 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"entradas": [{"dni": "<dni o null>", "nombreCompleto": "<nombre tal como figura>", "carrera": "<carrera o null>", "confianzaExtraccion": <0 a 1>}]}`,
-        },
-      ],
-    },
-    // maxRetries por encima del default (2): con concurrencia real contra el
-    // cupo de 80k tokens/min de la cuenta, un 429 puntual es esperable y se
-    // resuelve solo esperando el retry-after — no hace falta que rompa el
-    // lote entero (bug real 2026-08-02, ver nota arriba).
-    { maxRetries: 6 },
+      config: {
+        maxOutputTokens: MAX_TOKENS_LECTURA,
+        responseMimeType: "application/json",
+      },
+    }),
   );
 
   // Cortada por longitud: NO tratar como "sin entradas" — eso es
   // indistinguible de un lote realmente vacío y llevó al bug real
   // documentado arriba. Mejor fallar fuerte y dejar que el usuario reintente.
-  if (respuesta.stop_reason === "max_tokens") {
+  if (respuesta.candidates?.[0]?.finishReason === "MAX_TOKENS") {
     throw new LecturaPdfTruncadaError(numeroLote);
   }
 
-  const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") {
+  const texto2 = respuesta.text;
+  if (!texto2) {
     throw new LecturaPdfSinFormatoError(numeroLote);
   }
 
-  const json = extraerJson(bloqueTexto.text) as { entradas?: EntradaExtraidaPdf[] } | null;
+  const json = extraerJson(texto2) as { entradas?: EntradaExtraidaPdf[] } | null;
   if (!json || !Array.isArray(json.entradas)) {
     throw new LecturaPdfSinFormatoError(numeroLote);
   }

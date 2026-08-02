@@ -82,6 +82,55 @@ export function FormularioNuevaPersona({ carreras }: { carreras: Carrera[] }) {
         </div>
       )}
 
+      {estado.candidatos && estado.candidatos.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-borde border border-alerta bg-alerta/10 p-3 text-sm">
+          <p className="font-semibold text-texto">
+            Encontramos {estado.candidatos.length === 1 ? "una ficha parecida" : "fichas parecidas"} ya
+            cargada{estado.candidatos.length === 1 ? "" : "s"}.
+          </p>
+          {estado.motivoSugerencia && (
+            <p className="text-xs text-texto-secundario">{estado.motivoSugerencia}</p>
+          )}
+          <div className="flex flex-col gap-2">
+            {estado.candidatos.map((c) => (
+              <div key={c.id} className="rounded-borde-chico border border-borde bg-fondo p-2.5">
+                <p className="font-medium text-texto">
+                  {c.nombre} {c.apellido}
+                </p>
+                <p className="text-xs text-texto-secundario">
+                  {[c.dni ? `DNI ${c.dni}` : null, c.carrera, c.telefono, c.email]
+                    .filter(Boolean)
+                    .join(" · ") || "Sin más datos cargados"}
+                </p>
+                <button
+                  type="submit"
+                  name="accionDuplicado"
+                  value="fusionar"
+                  formNoValidate
+                  onClick={(e) => {
+                    const form = e.currentTarget.form;
+                    if (form) (form.elements.namedItem("personaCandidataId") as HTMLInputElement).value = c.id;
+                  }}
+                  className="mt-2 text-xs font-semibold text-secundario hover:underline"
+                >
+                  Es la misma persona →
+                </button>
+              </div>
+            ))}
+          </div>
+          <input type="hidden" name="personaCandidataId" defaultValue={estado.candidatos[0]?.id} />
+          <button
+            type="submit"
+            name="accionDuplicado"
+            value="confirmar_distinta"
+            formNoValidate
+            className="self-start rounded-borde-chico border border-borde px-3 py-1.5 text-xs font-semibold text-texto hover:bg-fondo-hover"
+          >
+            Ninguna es la misma, es una persona distinta
+          </button>
+        </div>
+      )}
+
       <Button type="submit" disabled={enviando} className="w-full">
         {enviando ? "Guardando..." : "Guardar persona"}
       </Button>

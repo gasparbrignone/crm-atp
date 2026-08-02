@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma/client";
-import { obtenerClienteAnthropic, MODELO_IA_LIVIANO } from "@/lib/ia/cliente-anthropic";
+import { obtenerClienteIA, MODELO_IA_LIVIANO, generarConReintentos } from "@/lib/ia/cliente-ia";
 
 // Matching de PadronEntrada contra Persona — /09-modulo-padron-electoral.md
 // sección 5: DNI exacto primero (señal determinística), después nombre
@@ -86,19 +86,21 @@ Considerá que el nombre del padrón puede venir en cualquier orden ("Apellido, 
 Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 {"personaId": "<id de la candidata o null>", "confianza": <número entre 0 y 1>, "motivo": "<explicación breve en español>"}`;
 
-  const cliente = obtenerClienteAnthropic();
-  const respuesta = await cliente.messages.create({
-    model: MODELO_IA_LIVIANO,
-    max_tokens: 300,
-    messages: [{ role: "user", content: prompt }],
-  });
+  const cliente = obtenerClienteIA();
+  const respuesta = await generarConReintentos(() =>
+    cliente.models.generateContent({
+      model: MODELO_IA_LIVIANO,
+      contents: prompt,
+      config: { maxOutputTokens: 300, responseMimeType: "application/json" },
+    }),
+  );
 
-  const bloqueTexto = respuesta.content.find((b) => b.type === "text");
-  if (!bloqueTexto || bloqueTexto.type !== "text") {
+  const texto = respuesta.text;
+  if (!texto) {
     return { tipo: "pendiente", motivo: "No se pudo interpretar la respuesta de la IA.", candidatos };
   }
 
-  const json = extraerJson(bloqueTexto.text) as
+  const json = extraerJson(texto) as
     | { personaId: string | null; confianza: number; motivo: string }
     | null;
 

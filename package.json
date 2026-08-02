@@ -15,7 +15,7 @@
     "crear-admin": "tsx scripts/create-admin-user.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
+    "@google/genai": "^2.15.0",
     "@prisma/client": "^6",
     "@supabase/ssr": "^0.5",
     "@supabase/supabase-js": "^2",

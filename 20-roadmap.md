@@ -127,7 +127,7 @@ Al iniciar cada fase, Claude Code debería releer los documentos funcionales ref
 
 **Objetivo**: se completa el módulo de importación más allá del CSV básico de la Fase 1.
 
-**Incluye**: importación desde Google Sheets y desde PDF (padrones escaneados) usando lectura nativa de Claude, manejo de errores parciales fila por fila, según [`14-importaciones-exportaciones.md`](./14-importaciones-exportaciones.md).
+**Incluye**: importación desde Google Sheets y desde PDF (padrones con texto seleccionable) usando extracción de texto + IA (Gemini) para estructurar filas, manejo de errores parciales fila por fila, según [`14-importaciones-exportaciones.md`](./14-importaciones-exportaciones.md).
 
 **Dependencias**: Fases 1 y 6.
 

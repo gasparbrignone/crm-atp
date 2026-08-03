@@ -12,7 +12,16 @@ import {
   obtenerCoberturaPunteo,
   obtenerRankingMilitantesPunteo,
   obtenerDistribucionClasificacionPunteo,
+  obtenerPunteoDePersona,
+  obtenerTodosLosPunteosDePersona,
 } from "@/lib/servicios/punteo.service";
+import { listarPersonas } from "@/lib/servicios/personas.service";
+import {
+  buscarParticipacionesConFiltros,
+  type AgrupacionParticipaciones,
+} from "@/lib/servicios/participaciones.service";
+import { obtenerHistorialDeEntidad } from "@/lib/servicios/auditoria.service";
+import type { EstadoActividad, EstadoParticipacion } from "@prisma/client";
 
 // Chatbot conectado a la base de datos — /15-ia.md sección 7. Arquitectura de
 // texto a consulta CONTROLADA (tool-use), nunca SQL libre: cada herramienta
@@ -44,37 +53,146 @@ async function resolverTipoActividadId(nombre?: string): Promise<string | undefi
   return tipo?.id;
 }
 
+async function buscarPersonaPorNombre(nombreLibre: string) {
+  const texto = nombreLibre.trim();
+  if (!texto) return null;
+  return prisma.persona.findFirst({
+    where: {
+      estadoFicha: { not: "fusionada" },
+      OR: [
+        { nombre: { contains: texto, mode: "insensitive" } },
+        { apellido: { contains: texto, mode: "insensitive" } },
+        { dni: { contains: texto } },
+      ],
+    },
+    select: { id: true, nombre: true, apellido: true },
+  });
+}
+
 export const HERRAMIENTAS_CHATBOT: HerramientaChatbot[] = [
   {
     permisoRequerido: "personas.ver",
     declaracion: {
-      name: "contar_personas",
+      name: "buscar_personas",
       description:
-        "Cuenta personas del CRM según filtros opcionales de carrera y año. Usar para preguntas tipo '¿cuántas personas de Enfermería de 3er año...?'.",
+        "Busca y cuenta personas del CRM combinando filtros (carrera, año, estado de ficha, estado de padrón, etiqueta). Devuelve el total, una muestra de personas concretas (con sus etiquetas) y sus IDs. Usar para preguntas tipo '¿cuántas personas de Enfermería de 3er año...?' o para conseguir un grupo de personas sobre el que después preguntar otra cosa (ej. sus actividades) con `listar_participaciones`.",
       parameters: {
         type: Type.OBJECT,
         properties: {
           carrera: { type: Type.STRING, description: "Nombre libre de la carrera, ej. 'Enfermería'." },
           anio: { type: Type.NUMBER, description: "Año de cursada, ej. 3." },
-          incluirArchivadas: {
-            type: Type.BOOLEAN,
-            description: "Si es true, cuenta también fichas archivadas/fusionadas. Por defecto solo activas.",
+          etiqueta: { type: Type.STRING, description: "Nombre libre de una etiqueta asignada a la persona, opcional." },
+          estadoFicha: {
+            type: Type.STRING,
+            description: "'activa' (por defecto), 'archivada' o 'fusionada'.",
+          },
+          estadoPadron: {
+            type: Type.STRING,
+            description:
+              "Filtra por estado en el padrón activo (cualquiera de los dos tipos): 'en_padron_habilitado', 'no_encontrado_en_padron' o 'no_evaluado'. Requiere permiso de padrón; si no lo tenés, se ignora.",
+          },
+        },
+      },
+    },
+    async ejecutar(usuario, args) {
+      let carreraId: string | undefined;
+      if (typeof args.carrera === "string" && args.carrera.trim()) {
+        carreraId = await resolverCarreraSemantica(args.carrera);
+        if (!carreraId) return { total: 0, aviso: `No se encontró la carrera "${args.carrera}" en el catálogo.` };
+      }
+
+      let etiquetaId: string | undefined;
+      if (typeof args.etiqueta === "string" && args.etiqueta.trim()) {
+        const etiqueta = await prisma.etiqueta.findFirst({
+          where: { activo: true, nombre: { contains: args.etiqueta, mode: "insensitive" } },
+        });
+        if (!etiqueta) return { total: 0, aviso: `No se encontró la etiqueta "${args.etiqueta}" en el catálogo.` };
+        etiquetaId = etiqueta.id;
+      }
+
+      const puedeVerPadron = usuario.rol.permisos.some((rp) => rp.permiso.codigo === "padron.ver");
+      const estadoPadron =
+        puedeVerPadron && typeof args.estadoPadron === "string" ? args.estadoPadron : undefined;
+
+      const { personas, total } = await listarPersonas({
+        carreraId,
+        etiquetaId,
+        anio: typeof args.anio === "number" ? String(args.anio) : undefined,
+        estadoFicha: typeof args.estadoFicha === "string" ? args.estadoFicha : "activa",
+        estadoPadronCD: estadoPadron,
+        porPagina: 50,
+      });
+
+      return {
+        total,
+        muestra: personas.map((p) => ({
+          id: p.id,
+          nombre: `${p.apellido}, ${p.nombre}`,
+          carrera: p.carrera?.nombre ?? null,
+          anio: p.anio,
+          etiquetas: p.etiquetas.map((pe) => pe.etiqueta.nombre),
+        })),
+        aviso: total > personas.length ? `Se muestran ${personas.length} de ${total} resultados.` : undefined,
+      };
+    },
+  },
+  {
+    permisoRequerido: "actividades.ver",
+    declaracion: {
+      name: "listar_participaciones",
+      description:
+        "Herramienta general que cruza filtros de personas (carrera, año, estado de ficha) con filtros de actividades/participaciones (tipo de actividad, nombre, rango de fechas, estado de la actividad, estado de la participación). Es la herramienta correcta para preguntas que combinan ambos lados, como '¿a qué actividades fueron las personas de 2do año de Enfermería?', '¿cuántas personas de cada carrera asistieron a la Jornada X?' o '¿qué tipo de actividad tiene más participación entre los de 1er año?'. Con `agruparPor` devuelve conteos agregados; sin `agruparPor` devuelve un listado de filas concretas (persona + actividad).",
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          carrera: { type: Type.STRING, description: "Nombre libre de la carrera de la persona, opcional." },
+          anio: { type: Type.NUMBER, description: "Año de cursada de la persona, opcional." },
+          tipoActividad: { type: Type.STRING, description: "Nombre libre del tipo de actividad, opcional." },
+          actividadNombre: { type: Type.STRING, description: "Nombre o parte del nombre de una actividad puntual, opcional." },
+          estadoActividad: {
+            type: Type.STRING,
+            description: "'planificada', 'en_curso', 'finalizada' o 'cancelada', opcional.",
+          },
+          estadoParticipacion: {
+            type: Type.STRING,
+            description: "'inscripto', 'asistio' o 'cancelado', opcional.",
+          },
+          desde: { type: Type.STRING, description: "Fecha ISO (YYYY-MM-DD) desde la que buscar, opcional." },
+          hasta: { type: Type.STRING, description: "Fecha ISO (YYYY-MM-DD) hasta la que buscar, opcional." },
+          agruparPor: {
+            type: Type.STRING,
+            description:
+              "Si se quiere un conteo agregado en vez de un listado de filas: 'actividad', 'tipoActividad', 'carrera', 'anio' o 'estadoParticipacion'.",
+          },
+          limite: {
+            type: Type.NUMBER,
+            description: "Cantidad máxima de filas a devolver en modo listado (no aplica agrupando). Por defecto 30.",
           },
         },
       },
     },
     async ejecutar(_usuario, args) {
-      const where: Record<string, unknown> = {};
-      if (!args.incluirArchivadas) where.estadoFicha = "activa";
+      let carreraId: string | undefined;
       if (typeof args.carrera === "string" && args.carrera.trim()) {
-        const carreraId = await resolverCarreraSemantica(args.carrera);
+        carreraId = await resolverCarreraSemantica(args.carrera);
         if (!carreraId) return { total: 0, aviso: `No se encontró la carrera "${args.carrera}" en el catálogo.` };
-        where.carreraId = carreraId;
       }
-      if (typeof args.anio === "number") where.anio = args.anio;
+      const tipoActividadId = await resolverTipoActividadId(args.tipoActividad as string | undefined);
 
-      const total = await prisma.persona.count({ where });
-      return { total };
+      return buscarParticipacionesConFiltros(
+        {
+          carreraId,
+          anio: typeof args.anio === "number" ? args.anio : undefined,
+          tipoActividadId,
+          actividadNombre: typeof args.actividadNombre === "string" ? args.actividadNombre : undefined,
+          estadoActividad: args.estadoActividad as EstadoActividad | undefined,
+          estadoParticipacion: args.estadoParticipacion as EstadoParticipacion | undefined,
+          desde: typeof args.desde === "string" ? new Date(args.desde) : undefined,
+          hasta: typeof args.hasta === "string" ? new Date(args.hasta) : undefined,
+        },
+        args.agruparPor as AgrupacionParticipaciones | undefined,
+        typeof args.limite === "number" ? args.limite : undefined,
+      );
     },
   },
   {
@@ -216,6 +334,96 @@ export const HERRAMIENTAS_CHATBOT: HerramientaChatbot[] = [
     },
     async ejecutar() {
       return obtenerRankingMilitantesPunteo();
+    },
+  },
+  {
+    // Devuelve el CONTENIDO real de los comentarios de punteo, no solo un
+    // conteo — decisión explícita de Gaspar (2026-08-03, ver /16-seguridad.md
+    // sección 6 y 9) que acepta enviar este dato sensible a la API de Gemini.
+    // El permiso base es punteo.ver_propio (cualquiera puede ver sus propios
+    // comentarios); ver los de otros usuarios sigue exigiendo
+    // punteo.ver_todos y queda auditado igual que en la UI (verificado
+    // adentro, no solo declarado acá).
+    permisoRequerido: "punteo.ver_propio",
+    declaracion: {
+      name: "comentarios_de_punteo_de_persona",
+      description:
+        "Devuelve la clasificación, el estado de seguimiento y el CONTENIDO de los comentarios de punteo cargados sobre una persona puntual, buscada por nombre. Por defecto solo ve TU PROPIO punteo sobre esa persona; si tenés permiso para ver el punteo de todos los usuarios, devuelve también el de los demás.",
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          personaNombre: { type: Type.STRING, description: "Nombre, apellido o DNI de la persona." },
+        },
+        required: ["personaNombre"],
+      },
+    },
+    async ejecutar(usuario, args) {
+      const persona = await buscarPersonaPorNombre(String(args.personaNombre ?? ""));
+      if (!persona) return { encontrada: false };
+
+      const puedeVerTodos = usuario.rol.permisos.some((rp) => rp.permiso.codigo === "punteo.ver_todos");
+      const ctx = { usuarioId: usuario.id, puedeVerTodos };
+
+      if (puedeVerTodos) {
+        const punteos = await obtenerTodosLosPunteosDePersona(ctx, persona.id);
+        return {
+          encontrada: true,
+          persona: `${persona.apellido}, ${persona.nombre}`,
+          punteos: punteos.map((p) => ({
+            usuario: `${p.usuario.apellido}, ${p.usuario.nombre}`,
+            clasificacion: p.clasificacion?.nombre ?? null,
+            estadoSeguimiento: p.estadoSeguimiento,
+            comentarios: p.comentarios.map((c) => ({ contenido: c.contenido, fecha: c.fechaCreacion })),
+          })),
+        };
+      }
+
+      const punteo = await obtenerPunteoDePersona(ctx, persona.id);
+      return {
+        encontrada: true,
+        persona: `${persona.apellido}, ${persona.nombre}`,
+        tienePunteoPropio: !!punteo,
+        punteoPropio: punteo
+          ? {
+              clasificacion: punteo.clasificacion?.nombre ?? null,
+              estadoSeguimiento: punteo.estadoSeguimiento,
+              comentarios: punteo.comentarios.map((c) => ({ contenido: c.contenido, fecha: c.fechaCreacion })),
+            }
+          : null,
+      };
+    },
+  },
+  {
+    permisoRequerido: "auditoria.ver",
+    declaracion: {
+      name: "historial_de_persona",
+      description:
+        "Devuelve el historial de cambios (alta, ediciones, fusión) registrado sobre una persona puntual, buscada por nombre. Requiere permiso de auditoría.",
+      parameters: {
+        type: Type.OBJECT,
+        properties: {
+          personaNombre: { type: Type.STRING, description: "Nombre, apellido o DNI de la persona." },
+        },
+        required: ["personaNombre"],
+      },
+    },
+    async ejecutar(_usuario, args) {
+      const persona = await buscarPersonaPorNombre(String(args.personaNombre ?? ""));
+      if (!persona) return { encontrada: false };
+
+      const historial = await obtenerHistorialDeEntidad("Persona", persona.id);
+      return {
+        encontrada: true,
+        persona: `${persona.apellido}, ${persona.nombre}`,
+        historial: historial.map((h) => ({
+          fecha: h.fecha,
+          accion: h.accion,
+          campo: h.campo,
+          valorAnterior: h.valorAnterior,
+          valorNuevo: h.valorNuevo,
+          usuario: h.usuarioNombre,
+        })),
+      };
     },
   },
   {

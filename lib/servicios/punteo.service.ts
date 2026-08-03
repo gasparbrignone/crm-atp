@@ -17,7 +17,7 @@ export class AccesoPunteoAjenoSinPermisoError extends Error {
   }
 }
 
-interface ContextoUsuario {
+export interface ContextoUsuario {
   usuarioId: string;
   puedeVerTodos: boolean;
 }
@@ -143,6 +143,32 @@ export async function obtenerPunteoDePersona(
   }
 
   return punteo;
+}
+
+// Todos los PunteoPersona cargados sobre una persona, a través de todos los
+// usuarios — a diferencia de obtenerPunteoDePersona() (un usuario puntual),
+// esto es para la vista de conducción que quiere ver el panorama completo de
+// una persona. Exige punteo.ver_todos explícitamente (no hay "propio" acá
+// porque por definición trae ajenos), y audita el acceso a cada punteo que
+// no sea del propio usuario que consulta, igual criterio que el resto del
+// módulo.
+export async function obtenerTodosLosPunteosDePersona(ctx: ContextoUsuario, personaId: string) {
+  if (!ctx.puedeVerTodos) throw new AccesoPunteoAjenoSinPermisoError();
+
+  const punteos = await prisma.punteoPersona.findMany({
+    where: { personaId },
+    include: {
+      usuario: { select: { id: true, nombre: true, apellido: true } },
+      clasificacion: true,
+      comentarios: { orderBy: { fechaCreacion: "desc" } },
+    },
+  });
+
+  for (const punteo of punteos) {
+    await auditarAccesoSiEsAjeno(ctx, punteo.usuarioId, punteo.id);
+  }
+
+  return punteos;
 }
 
 // RN sección 11: el primer comentario o clasificación crea el PunteoPersona

@@ -28,6 +28,7 @@ export interface FiltrosListadoPersonas {
   estadoPadronCD?: string;
   estadoPadronCE?: string;
   estadoFicha?: string;
+  etiquetaId?: string;
   pagina?: number;
   porPagina?: number;
 }
@@ -50,6 +51,7 @@ export async function listarPersonas(filtros: FiltrosListadoPersonas) {
     where.estadoPadronCD = filtros.estadoPadronCD as Persona["estadoPadronCD"];
   if (filtros.estadoPadronCE)
     where.estadoPadronCE = filtros.estadoPadronCE as Persona["estadoPadronCE"];
+  if (filtros.etiquetaId) where.etiquetas = { some: { etiquetaId: filtros.etiquetaId } };
   if (filtros.q) {
     const q = filtros.q.trim();
     where.OR = [
@@ -63,7 +65,7 @@ export async function listarPersonas(filtros: FiltrosListadoPersonas) {
   const [personas, total] = await prisma.$transaction([
     prisma.persona.findMany({
       where,
-      include: { carrera: true },
+      include: { carrera: true, etiquetas: { include: { etiqueta: true } } },
       orderBy: [{ apellido: "asc" }, { nombre: "asc" }],
       skip: (pagina - 1) * porPagina,
       take: porPagina,

@@ -498,3 +498,126 @@ export async function importarParticipacionesCsv({
 
   return { ...jobFinal, altasNuevas };
 }
+
+export type AgrupacionParticipaciones =
+  | "actividad"
+  | "tipoActividad"
+  | "carrera"
+  | "anio"
+  | "estadoParticipacion";
+
+export interface FiltrosBusquedaParticipaciones {
+  carreraId?: string;
+  anio?: number;
+  estadoFichaPersona?: string;
+  tipoActividadId?: string;
+  actividadNombre?: string;
+  estadoActividad?: EstadoActividad;
+  estadoParticipacion?: EstadoParticipacion;
+  desde?: Date;
+  hasta?: Date;
+}
+
+// Consulta general que cruza filtros de Persona (carrera, año, estado de
+// ficha) con filtros de Actividad/Participación (tipo, nombre, fecha,
+// estado) — pensada para el chatbot de IA (/15-ia.md sección 7), que
+// necesita responder preguntas que combinan ambos lados ("¿a qué actividades
+// fueron las personas de 2do año de Enfermería?") sin poder generar SQL
+// libre. Sigue siendo una consulta parametrizada y acotada, no arbitraria:
+// solo los campos listados en `FiltrosBusquedaParticipaciones` son
+// filtrables. Con `agruparPor` devuelve conteos agregados (el volumen real
+// de este sistema, S4, permite agregar en memoria sin problema); sin
+// agrupar, devuelve un listado acotado de filas individuales.
+const LIMITE_LISTADO_DEFAULT = 30;
+const LIMITE_LISTADO_MAXIMO = 100;
+const LIMITE_FILAS_PARA_AGRUPAR = 3000;
+
+export async function buscarParticipacionesConFiltros(
+  filtros: FiltrosBusquedaParticipaciones,
+  agruparPor?: AgrupacionParticipaciones,
+  limite = LIMITE_LISTADO_DEFAULT,
+) {
+  const where = {
+    persona: {
+      estadoFicha: (filtros.estadoFichaPersona as never) ?? "activa",
+      ...(filtros.carreraId ? { carreraId: filtros.carreraId } : {}),
+      ...(filtros.anio != null ? { anio: filtros.anio } : {}),
+    },
+    actividad: {
+      ...(filtros.tipoActividadId ? { tipoActividadId: filtros.tipoActividadId } : {}),
+      ...(filtros.actividadNombre
+        ? { nombre: { contains: filtros.actividadNombre, mode: "insensitive" as const } }
+        : {}),
+      ...(filtros.estadoActividad ? { estado: filtros.estadoActividad } : {}),
+      ...(filtros.desde || filtros.hasta
+        ? { fechaInicio: { ...(filtros.desde ? { gte: filtros.desde } : {}), ...(filtros.hasta ? { lte: filtros.hasta } : {}) } }
+        : {}),
+    },
+    ...(filtros.estadoParticipacion ? { estado: filtros.estadoParticipacion } : {}),
+  };
+
+  const total = await prisma.participacion.count({ where });
+
+  if (agruparPor) {
+    const filas = await prisma.participacion.findMany({
+      where,
+      take: LIMITE_FILAS_PARA_AGRUPAR,
+      select: {
+        estado: true,
+        actividad: { select: { nombre: true, tipoActividad: { select: { nombre: true } } } },
+        persona: { select: { anio: true, carrera: { select: { nombre: true } } } },
+      },
+    });
+
+    const conteos = new Map<string, number>();
+    for (const fila of filas) {
+      const clave =
+        agruparPor === "actividad"
+          ? fila.actividad.nombre
+          : agruparPor === "tipoActividad"
+            ? fila.actividad.tipoActividad.nombre
+            : agruparPor === "carrera"
+              ? (fila.persona.carrera?.nombre ?? "Sin carrera")
+              : agruparPor === "anio"
+                ? (fila.persona.anio != null ? `${fila.persona.anio}° año` : "Sin año")
+                : fila.estado;
+      conteos.set(clave, (conteos.get(clave) ?? 0) + 1);
+    }
+
+    return {
+      modo: "agrupado" as const,
+      totalParticipaciones: total,
+      truncado: total > LIMITE_FILAS_PARA_AGRUPAR,
+      grupos: Array.from(conteos.entries())
+        .map(([clave, cantidad]) => ({ clave, cantidad }))
+        .sort((a, b) => b.cantidad - a.cantidad),
+    };
+  }
+
+  const limiteAplicado = Math.min(Math.max(limite, 1), LIMITE_LISTADO_MAXIMO);
+  const filas = await prisma.participacion.findMany({
+    where,
+    take: limiteAplicado,
+    orderBy: { actividad: { fechaInicio: "desc" } },
+    select: {
+      estado: true,
+      persona: { select: { nombre: true, apellido: true, anio: true, carrera: { select: { nombre: true } } } },
+      actividad: { select: { nombre: true, fechaInicio: true, tipoActividad: { select: { nombre: true } } } },
+    },
+  });
+
+  return {
+    modo: "listado" as const,
+    total,
+    mostradas: filas.length,
+    filas: filas.map((f) => ({
+      persona: `${f.persona.apellido}, ${f.persona.nombre}`,
+      carrera: f.persona.carrera?.nombre ?? null,
+      anio: f.persona.anio,
+      actividad: f.actividad.nombre,
+      tipoActividad: f.actividad.tipoActividad.nombre,
+      fechaActividad: f.actividad.fechaInicio,
+      estadoParticipacion: f.estado,
+    })),
+  };
+}

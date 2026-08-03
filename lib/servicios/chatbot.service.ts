@@ -103,17 +103,35 @@ export async function enviarMensajeChatbot(
     data: { conversacionId: conversacion.id, rol: "usuario", contenido: mensaje },
   });
 
-  const resultado = await generarRespuestaChatbot(usuario, historial, mensaje);
+  // El mensaje del usuario ya quedó guardado arriba: si generarRespuestaChatbot
+  // revienta (ej. cuota diaria de Gemini agotada) sin este try/catch, la
+  // pregunta quedaba huérfana en la base para siempre (sin respuesta, pero
+  // sí contando para el límite de mensajes de la conversación) y el usuario
+  // veía un error crudo en vez de un mensaje entendible (bug real encontrado
+  // en auditoría 2026-08-03, contradice /CLAUDE.md sección 4). Con esto, un
+  // fallo de la IA se guarda como una respuesta del asistente explicando el
+  // problema, igual que cualquier otro turno.
+  let respuestaTexto: string;
+  let resultado: Awaited<ReturnType<typeof generarRespuestaChatbot>> | null = null;
+  try {
+    resultado = await generarRespuestaChatbot(usuario, historial, mensaje);
+    respuestaTexto = resultado.respuesta;
+  } catch {
+    respuestaTexto =
+      "No pude responder ahora mismo (falló la conexión con la IA). Probá de nuevo en unos minutos.";
+  }
 
   await prisma.chatbotMensaje.create({
     data: {
       conversacionId: conversacion.id,
       rol: "asistente",
-      contenido: resultado.respuesta,
+      contenido: respuestaTexto,
       consultasEjecutadas:
-        resultado.consultasEjecutadas.length > 0 ? JSON.stringify(resultado.consultasEjecutadas) : null,
+        resultado && resultado.consultasEjecutadas.length > 0
+          ? JSON.stringify(resultado.consultasEjecutadas)
+          : null,
     },
   });
 
-  return { conversacionId: conversacion.id, respuesta: resultado.respuesta };
+  return { conversacionId: conversacion.id, respuesta: respuestaTexto };
 }

@@ -225,7 +225,7 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
 }
 
 // Punto de entrada del módulo: intenta primero las señales determinísticas
-// (gratis, sin llamar a la IA) y solo recurre a Claude cuando hace falta
+// (gratis, sin llamar a la IA) y solo recurre a la IA cuando hace falta
 // juicio sobre variantes de nombre — así se minimiza el costo real de uso
 // (/15-ia.md sección 10).
 export async function buscarPersonaCoincidente(

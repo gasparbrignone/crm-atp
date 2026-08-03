@@ -90,6 +90,26 @@ function segundosDeEsperaSugeridos(error: unknown): number | null {
 // invocación nueva con su propio presupuesto de tiempo entero.
 const TOPE_ESPERA_REINTENTO_MS = 20_000;
 
+export class CuotaDiariaAgotadaError extends Error {
+  constructor() {
+    super(
+      "Se agotó la cuota diaria gratuita de Gemini para hoy. Va a volver a funcionar automáticamente pasada la medianoche (hora del proyecto de Google), o podés aumentar el límite vinculando facturación en Google AI Studio.",
+    );
+    this.name = "CuotaDiariaAgotadaError";
+  }
+}
+
+// Un 429 por cuota DIARIA (a diferencia de por-minuto) no se soluciona
+// reintentando en segundos — encontrado en auditoría 2026-08-03: antes esto
+// reintentaba igual hasta 3 veces (y cada llamador de generarConReintentos,
+// como leerLoteTexto, reintenta otras 3 veces más arriba), quemando minutos
+// reales contra un límite que no va a levantar hasta el día siguiente. El
+// quotaId real que devuelve Google distingue "PerDay" de "PerMinute" — se
+// falla rápido y explícito en el caso diario en vez de insistir a ciegas.
+function esCuotaDiariaAgotada(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429 && /PerDay/i.test(error.message);
+}
+
 export async function generarConReintentos<T>(
   llamada: () => Promise<T>,
   intentos = 3,
@@ -100,6 +120,7 @@ export async function generarConReintentos<T>(
     try {
       return await llamada();
     } catch (error) {
+      if (esCuotaDiariaAgotada(error)) throw new CuotaDiariaAgotadaError();
       ultimoError = error;
       const reintentable = error instanceof ApiError && (error.status === 429 || error.status >= 500);
       if (!reintentable || intento === intentos - 1) throw error;

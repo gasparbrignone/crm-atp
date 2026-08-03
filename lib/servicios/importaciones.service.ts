@@ -71,11 +71,25 @@ export async function procesarImportacionPersonasCsv({
     const carreraTexto = columnaCarrera ? fila[columnaCarrera]?.trim() : undefined;
     // Matching semántico (/15-ia.md sección 3): primero exacto (gratis), y
     // solo si no hay coincidencia exacta se recurre a la IA para resolver
-    // variantes de escritura ("Enfermeria", "Lic. en Enfermería", "ENF").
-    const carreraId = carreraTexto
-      ? (carreraPorNombre.get(carreraTexto.toLowerCase()) ??
-        (await resolverCarreraSemantica(carreraTexto)))
-      : undefined;
+    // variantes de escritura ("Enfermeria", "Lic. en Enfermería", "ENF"). Con
+    // try/catch (auditoría 2026-08-03, bug real): si la IA falla (ej. cuota
+    // diaria agotada a mitad de importación), antes esto tiraba abajo TODO el
+    // for sin llegar nunca al `prisma.importJob.update()` final — el
+    // ImportJob quedaba en "procesando" para siempre, sin explicación, con
+    // las filas ya creadas antes del fallo huérfanas de ese reporte. Ahora la
+    // fila sigue sin carrera asignada (recuperable a mano después) en vez de
+    // perder la importación completa.
+    let carreraId: string | undefined;
+    if (carreraTexto) {
+      carreraId = carreraPorNombre.get(carreraTexto.toLowerCase());
+      if (!carreraId) {
+        try {
+          carreraId = await resolverCarreraSemantica(carreraTexto);
+        } catch {
+          carreraId = undefined;
+        }
+      }
+    }
 
     const parsed = personaFormSchema.safeParse(datosMapeados);
     if (!parsed.success) {

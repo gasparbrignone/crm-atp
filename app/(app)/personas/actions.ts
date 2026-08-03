@@ -82,21 +82,35 @@ export async function crearPersonaAction(
 
   if (!yaResueltoPorElUsuario) {
     const umbral = await obtenerUmbralConfianzaDuplicados();
-    const resultado = await buscarPersonaCoincidente(
-      {
-        nombre: parsed.data.nombre,
-        apellido: parsed.data.apellido,
-        telefono: parsed.data.telefono || undefined,
-        email: parsed.data.email || undefined,
-        dni: parsed.data.dni || undefined,
-      },
-      umbral,
-    );
+    // Si la IA falla acá (cuota agotada, error de red), antes esto tiraba
+    // abajo toda la Server Action con un error crudo — el usuario ni podía
+    // cargar una persona nueva mientras la IA estuviera caída (bug real
+    // encontrado en auditoría 2026-08-03, contradice /CLAUDE.md sección 4:
+    // "los errores no controlados... se traducen a un mensaje entendible").
+    // La detección de duplicados asiste, no bloquea (/15-ia.md sección 2.3):
+    // si no se puede consultar, se sigue de largo sin sugerencia en vez de
+    // impedir el alta — el DNI duplicado exacto sigue protegido igual más
+    // abajo por crearPersona(), que no depende de la IA.
+    let resultado: Awaited<ReturnType<typeof buscarPersonaCoincidente>> | null = null;
+    try {
+      resultado = await buscarPersonaCoincidente(
+        {
+          nombre: parsed.data.nombre,
+          apellido: parsed.data.apellido,
+          telefono: parsed.data.telefono || undefined,
+          email: parsed.data.email || undefined,
+          dni: parsed.data.dni || undefined,
+        },
+        umbral,
+      );
+    } catch {
+      resultado = null;
+    }
 
     // confianza === 1 solo puede venir de un DNI idéntico — ese caso se deja
     // pasar a crearPersona() para el bloqueo duro existente (DniDuplicadoError),
     // no a la sugerencia editable.
-    if (resultado.tipo === "coincidencia" && resultado.confianza < 1) {
+    if (resultado?.tipo === "coincidencia" && resultado.confianza < 1) {
       const [candidato] = await obtenerPersonasPorIds([resultado.personaId]);
       if (candidato) {
         return {
@@ -116,7 +130,7 @@ export async function crearPersonaAction(
       }
     }
 
-    if (resultado.tipo === "ambiguo" && resultado.candidatos.length > 0) {
+    if (resultado?.tipo === "ambiguo" && resultado.candidatos.length > 0) {
       const idsCandidatos = resultado.candidatos.slice(0, 5).map((c) => c.id);
       const candidatosCompletos = await obtenerPersonasPorIds(idsCandidatos);
       return {

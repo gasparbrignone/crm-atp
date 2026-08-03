@@ -258,23 +258,39 @@ async function procesarFilasPadronEnParalelo(
         continue;
       }
 
-      const datosMatching = await resolverDatosMatchingEntrada(
-        {
+      // Bug real encontrado en auditoría (2026-08-03): esto no tenía
+      // try/catch. Con 10 workers en paralelo (CONCURRENCIA_MATCHING), un
+      // solo error de matching (ej. la cuota diaria de Gemini agotada a
+      // mitad de lote) rechazaba el Promise.all entero — descartando los
+      // matches YA resueltos de las demás filas de este lote (nunca llegaban
+      // al createMany) sin avanzar lotesProcesados. El reintento del cliente
+      // volvía a gastar cuota re-resolviendo filas que ya se habían resuelto
+      // bien la vez anterior. Ahora una fila que falla queda omitida con el
+      // motivo del error, sin tirar abajo el resto del lote.
+      try {
+        const datosMatching = await resolverDatosMatchingEntrada(
+          {
+            dni: fila.dni,
+            nombreCompletoOriginal: fila.nombreCompletoOriginal,
+            carreraTextoOriginal: fila.carreraTextoOriginal,
+            confianzaExtraccion: fila.confianzaExtraccion,
+          },
+          umbral,
+        );
+
+        paraCrear.push({
+          padronElectoralId: padronId,
           dni: fila.dni,
           nombreCompletoOriginal: fila.nombreCompletoOriginal,
-          carreraTextoOriginal: fila.carreraTextoOriginal,
-          confianzaExtraccion: fila.confianzaExtraccion,
-        },
-        umbral,
-      );
-
-      paraCrear.push({
-        padronElectoralId: padronId,
-        dni: fila.dni,
-        nombreCompletoOriginal: fila.nombreCompletoOriginal,
-        carreraTextoOriginal: fila.carreraTextoOriginal ?? null,
-        ...datosMatching,
-      });
+          carreraTextoOriginal: fila.carreraTextoOriginal ?? null,
+          ...datosMatching,
+        });
+      } catch (error) {
+        filasOmitidas.push({
+          numeroFila: fila.numeroFila,
+          motivo: `Error al resolver esta fila, no se cargó: ${error instanceof Error ? error.message : "error desconocido"}`,
+        });
+      }
     }
   }
 

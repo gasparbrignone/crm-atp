@@ -10,6 +10,7 @@ import {
   MdFactCheck,
 } from "react-icons/md";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { BuscadorGlobal } from "@/components/buscador/BuscadorGlobal";
 import { Sidebar, type EnlaceNav } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { obtenerUsuarioActual, tienePermiso } from "@/lib/permisos/permisos";
@@ -96,6 +97,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <span className="text-sm font-semibold text-texto">CRM ATP</span>
           </div>
           <div className="flex items-center gap-3">
+            <BuscadorGlobal />
             <span className="hidden text-sm text-texto-secundario sm:inline">
               {usuario.nombre} {usuario.apellido}
               <span className="ml-1.5 rounded-full bg-fondo-hover px-2 py-0.5 text-xs font-medium text-texto-secundario">

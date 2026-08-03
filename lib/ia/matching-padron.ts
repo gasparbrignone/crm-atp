@@ -72,6 +72,46 @@ function extraerJson(texto: string): unknown {
   }
 }
 
+function normalizarToken(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+// Bug real encontrado en auditoría 2026-08-03 (reportado por Gaspar con
+// capturas de vinculaciones automáticas evidentemente erróneas: "Barroso,
+// Constanza" vinculada a "cindy barroso", "Cejas, Agustina" Y "Cejas,
+// Damaris" vinculadas ambas a la misma "Candela cejas", etc.). El modelo
+// liviano sin razonamiento (gemini-3.1-flash-lite, thinkingBudget 0) resultó
+// NO CONFIABLE para calibrar una confianza numérica en el caso "coincide el
+// apellido pero el nombre de pila es completamente distinto" — la prueba
+// definitiva: la MISMA fila de padrón ("Chazarreta, Melani Belen" vs
+// candidata "iara chazarreta") procesada dos veces dio 60% una vez
+// (correctamente rechazada) y 85% la otra (vinculada automático, mal). No es
+// un problema de umbral — es que el número que devuelve la IA para este caso
+// puntual no es estable ni confiable. Por eso esto no puede depender solo de
+// la confianza autoreportada: se exige además, en código, que el nombre de
+// pila de la entrada comparta al menos un token razonable con el de la
+// candidata antes de aceptar un vínculo automático. Si no lo comparte, se
+// fuerza a revisión humana (`pendiente`) sin importar qué confianza haya
+// dicho la IA — nunca se sube el riesgo de vincular mal a alguien en un
+// padrón que define quién puede votar.
+export function compartenNombreDePila(nombreCompletoOriginal: string, nombreCandidato: string): boolean {
+  const partes = nombreCompletoOriginal.split(",");
+  const nombrePadron = (partes.length > 1 ? partes[1] : partes[0]) ?? "";
+  const tokensPadron = normalizarToken(nombrePadron)
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+  const tokensCandidato = normalizarToken(nombreCandidato)
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+
+  if (tokensPadron.length === 0 || tokensCandidato.length === 0) return true;
+
+  return tokensPadron.some((tp) => tokensCandidato.some((tc) => tp === tc || tp.includes(tc) || tc.includes(tp)));
+}
+
 export async function buscarPersonaParaEntradaPadron(
   entrada: { dni: string; nombreCompletoOriginal: string },
   umbral: number,
@@ -147,6 +187,15 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     return {
       tipo: "pendiente",
       motivo: `Coincidencia de baja confianza (${Math.round(json.confianza * 100)}%): ${json.motivo}`,
+      candidatos,
+    };
+  }
+
+  const candidataElegida = candidatos.find((c) => c.id === json.personaId)!;
+  if (!compartenNombreDePila(entrada.nombreCompletoOriginal, candidataElegida.nombre)) {
+    return {
+      tipo: "pendiente",
+      motivo: `La IA dijo ${Math.round(json.confianza * 100)}% de confianza, pero el nombre de pila no coincide en absoluto con "${candidataElegida.nombre}" — se fuerza revisión humana en vez de confiar en el número solo. Motivo de la IA: ${json.motivo}`,
       candidatos,
     };
   }

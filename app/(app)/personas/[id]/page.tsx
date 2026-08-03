@@ -7,6 +7,8 @@ import { listarParticipacionesDePersona } from "@/lib/servicios/participaciones.
 import { prisma } from "@/lib/prisma/client";
 import { CampoEditable } from "@/components/personas/CampoEditable";
 import { BuscarDuplicadoFusion } from "@/components/personas/BuscarDuplicadoFusion";
+import { HistorialPersona } from "@/components/personas/HistorialPersona";
+import { obtenerHistorialDeEntidad } from "@/lib/servicios/auditoria.service";
 import { PersonaTabs } from "@/components/personas/PersonaTabs";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -26,14 +28,16 @@ export default async function PersonaDetallePage({
   await requerirPermiso("personas.ver");
   const { id } = await params;
 
-  const [persona, carreras, puedeEditar, puedeArchivar, puedeFusionar, participaciones] = await Promise.all([
-    obtenerPersona(id),
-    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
-    tienePermiso("personas.editar"),
-    tienePermiso("personas.archivar"),
-    tienePermiso("personas.fusionar_duplicados"),
-    listarParticipacionesDePersona(id),
-  ]);
+  const [persona, carreras, puedeEditar, puedeArchivar, puedeFusionar, participaciones, historial] =
+    await Promise.all([
+      obtenerPersona(id),
+      prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+      tienePermiso("personas.editar"),
+      tienePermiso("personas.archivar"),
+      tienePermiso("personas.fusionar_duplicados"),
+      listarParticipacionesDePersona(id),
+      obtenerHistorialDeEntidad("Persona", id),
+    ]);
 
   if (!persona) notFound();
 
@@ -247,12 +251,7 @@ export default async function PersonaDetallePage({
           {
             id: "historial",
             etiqueta: "Historial",
-            contenido: (
-              <p className="text-sm text-texto-secundario">
-                La línea de tiempo completa se agrega en la Fase 12 (ver /20-roadmap.md). Los
-                cambios ya se están registrando desde ahora.
-              </p>
-            ),
+            contenido: <HistorialPersona eventos={historial} />,
           },
         ]}
         />

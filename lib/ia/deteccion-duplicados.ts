@@ -136,6 +136,35 @@ function extraerJson(texto: string): unknown {
   }
 }
 
+function normalizarToken(texto: string): string {
+  return texto
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+// Mismo tipo de red de seguridad agregada en matching-padron.ts tras un bug
+// real encontrado en auditoría (2026-08-03): el modelo liviano sin
+// razonamiento no calibra de forma estable una confianza numérica para "el
+// apellido coincide pero el nombre no tiene nada que ver" (medido: la misma
+// comparación dio 60% una vez y 85% otra). Acá el riesgo es más alto que en
+// el alta manual porque el resultado "coincidencia" de este módulo se usa
+// para inscribir directamente sobre una Persona YA EXISTENTE en la
+// importación masiva de inscriptos (participaciones.service.ts) SIN que un
+// humano confirme antes — a diferencia del alta manual, que siempre muestra
+// la sugerencia para que el usuario decida. No se puede depender solo del
+// número de la IA para ese camino sin revisión humana.
+function compartenNombre(nombreA: string, nombreB: string): boolean {
+  const tokensA = normalizarToken(nombreA)
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+  const tokensB = normalizarToken(nombreB)
+    .split(/\s+/)
+    .filter((t) => t.length >= 3);
+  if (tokensA.length === 0 || tokensB.length === 0) return true;
+  return tokensA.some((a) => tokensB.some((b) => a === b || a.includes(b) || b.includes(a)));
+}
+
 // Paso 2 (asistido por IA): sin DNI ni teléfono exacto disponible, se le pide
 // al modelo que compare la fila contra un conjunto acotado de candidatos por
 // apellido similar — nunca se le manda la base completa de Personas
@@ -217,6 +246,15 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
     return {
       tipo: "ambiguo",
       motivo: `Coincidencia de baja confianza (${Math.round(json.confianza * 100)}%): ${json.motivo}`,
+      candidatos: candidatosParaMostrar,
+    };
+  }
+
+  const candidataElegida = candidatos.find((c) => c.id === json.personaId)!;
+  if (!compartenNombre(datos.nombre, candidataElegida.nombre)) {
+    return {
+      tipo: "ambiguo",
+      motivo: `La IA dijo ${Math.round(json.confianza * 100)}% de confianza, pero el nombre "${datos.nombre}" no coincide en absoluto con "${candidataElegida.nombre}" — se fuerza revisión humana en vez de confiar en el número solo. Motivo de la IA: ${json.motivo}`,
       candidatos: candidatosParaMostrar,
     };
   }

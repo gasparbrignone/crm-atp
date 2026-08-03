@@ -7,13 +7,16 @@ export function Card({
   children,
   className,
   padding = "normal",
+  id,
 }: {
   children: ReactNode;
   className?: string;
   padding?: "normal" | "chico" | "ninguno";
+  id?: string;
 }) {
   return (
     <div
+      id={id}
       className={cn(
         "rounded-borde border border-borde bg-fondo-superficie shadow-tarjeta",
         padding === "normal" && "p-5",

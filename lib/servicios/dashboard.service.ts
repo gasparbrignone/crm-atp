@@ -1,13 +1,17 @@
 import { prisma } from "@/lib/prisma/client";
+import {
+  obtenerCoberturaPunteo,
+  obtenerRankingMilitantesPunteo,
+  obtenerDistribucionClasificacionPunteo,
+} from "@/lib/servicios/punteo.service";
 
-// Fase 3 (/20-roadmap.md sección 6): solo KPIs y gráficos que dependen
-// únicamente de datos de Personas y Actividades. Quedan explícitamente fuera
-// de esta fase (paneles descriptos en /11-dashboards.md que dependen de
-// módulos no implementados todavía): cobertura de punteo, ranking de
-// militantes por punteo, distribución de clasificación de punteo,
-// comparativa entre padrones (todos dependen de Punteo/Padrón, fases 5-6),
-// "Mi punteo" y "Mis pendientes" del dashboard personal (Punteo y
-// Notificaciones, fases 5 y 11), y los insights narrados por IA (fase 9).
+// Fase 3 (/20-roadmap.md sección 6): KPIs y gráficos que dependían solo de
+// Personas y Actividades. Los paneles de /11-dashboards.md que dependían de
+// Punteo/Padrón (cobertura, ranking de militantes, distribución de
+// clasificación) se agregaron en la Fase 9, una vez esos módulos existían —
+// ver `obtenerAgregadosPunteoAdmin` más abajo. Sigue pendiente: comparativa
+// entre padrones, y "Mis pendientes" del dashboard personal (depende de
+// Notificaciones, fase 11).
 
 export type RangoFecha = "semana" | "mes" | "cuatrimestre" | "todo";
 
@@ -219,7 +223,11 @@ export async function obtenerDistribucionPorCarreraYAnio() {
     .filter((p) => p.carrera !== "Sin carrera");
 }
 
-export async function obtenerRankingActividadesPorAsistencia(filtros: FiltrosDashboardAdmin) {
+export async function obtenerRankingActividadesPorAsistencia(
+  filtros: FiltrosDashboardAdmin,
+  orden: "mayor" | "menor" = "mayor",
+  limite = 10,
+) {
   const periodo = resolverPeriodo(filtros.rango);
   const whereTipoActividad = filtros.tipoActividadId
     ? { tipoActividadId: filtros.tipoActividadId }
@@ -240,6 +248,7 @@ export async function obtenerRankingActividadesPorAsistencia(filtros: FiltrosDas
     },
   });
 
+  const signo = orden === "mayor" ? -1 : 1;
   return actividades
     .map((a) => {
       const noCanceladas = a.participaciones.filter((p) => p.estado !== "cancelado");
@@ -256,8 +265,8 @@ export async function obtenerRankingActividadesPorAsistencia(filtros: FiltrosDas
       };
     })
     .filter((a) => a.inscriptos > 0)
-    .sort((a, b) => b.tasaAsistencia - a.tasaAsistencia)
-    .slice(0, 10);
+    .sort((a, b) => signo * (a.tasaAsistencia - b.tasaAsistencia))
+    .slice(0, limite);
 }
 
 export async function obtenerPanelOperativo() {
@@ -290,6 +299,20 @@ export async function obtenerPanelOperativo() {
   ]);
 
   return { actividadesProximas, importacionesConErrores };
+}
+
+// Agregados de Punteo para el dashboard admin — /11-dashboards.md sección
+// 3.2. `incluirRankingMilitantes` se decide en la página según si quien mira
+// el dashboard tiene `punteo.ver_todos` (expone actividad de otros usuarios,
+// a diferencia de cobertura/distribución que son agregados puros sin
+// identificar usuarios).
+export async function obtenerAgregadosPunteoAdmin(incluirRankingMilitantes: boolean) {
+  const [cobertura, distribucionClasificacion, rankingMilitantes] = await Promise.all([
+    obtenerCoberturaPunteo(),
+    obtenerDistribucionClasificacionPunteo(),
+    incluirRankingMilitantes ? obtenerRankingMilitantesPunteo() : Promise.resolve(null),
+  ]);
+  return { cobertura, distribucionClasificacion, rankingMilitantes };
 }
 
 export async function obtenerDashboardPersonal(usuarioId: string) {

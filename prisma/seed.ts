@@ -283,6 +283,19 @@ async function main() {
     },
   });
 
+  // Límite de mensajes por conversación del chatbot — /15-ia.md sección 10:
+  // salvaguarda operativa de costo, configurable sin redeploy.
+  await prisma.configuracionSistema.upsert({
+    where: { clave: "chatbot_max_mensajes_por_conversacion" },
+    update: {},
+    create: {
+      clave: "chatbot_max_mensajes_por_conversacion",
+      valor: "40",
+      descripcion:
+        "Cantidad máxima de mensajes (usuario + IA) permitidos en una misma conversación del chatbot, como salvaguarda de costo.",
+    },
+  });
+
   console.log("Seed de Fase 0 completado.");
 }
 

@@ -8,6 +8,7 @@ import {
   MdAdminPanelSettings,
   MdHowToVote,
   MdFactCheck,
+  MdChatBubbleOutline,
 } from "react-icons/md";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { BuscadorGlobal } from "@/components/buscador/BuscadorGlobal";
@@ -55,6 +56,12 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     etiqueta: "Importar",
     icono: <MdUploadFile size={18} />,
     permiso: "importaciones.ejecutar",
+  },
+  {
+    href: "/chatbot",
+    etiqueta: "Asistente",
+    icono: <MdChatBubbleOutline size={18} />,
+    permiso: "ia.usar_chatbot",
   },
   {
     href: "/usuarios",

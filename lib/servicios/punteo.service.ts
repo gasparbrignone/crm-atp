@@ -216,6 +216,76 @@ export async function actualizarClasificacionPunteo(
   return actualizado;
 }
 
+// Cobertura de punteo — /11-dashboards.md sección 3.1: % de personas del
+// padrón activo (cualquiera de los dos tipos, CD o CE) con al menos un
+// PunteoPersona cargado por algún usuario. Agregado puro, sin identificar qué
+// usuario clasificó a quién — por eso no exige `punteo.ver_todos`, solo
+// `dashboard.ver_administrativo` (verificado por quien llama).
+export async function obtenerCoberturaPunteo() {
+  const personasEnPadron = await prisma.persona.count({
+    where: {
+      OR: [{ estadoPadronCD: "en_padron_habilitado" }, { estadoPadronCE: "en_padron_habilitado" }],
+    },
+  });
+
+  if (personasEnPadron === 0) return { personasEnPadron: 0, conPunteo: 0, cobertura: null };
+
+  const conPunteo = await prisma.persona.count({
+    where: {
+      OR: [{ estadoPadronCD: "en_padron_habilitado" }, { estadoPadronCE: "en_padron_habilitado" }],
+      punteos: { some: {} },
+    },
+  });
+
+  return { personasEnPadron, conPunteo, cobertura: conPunteo / personasEnPadron };
+}
+
+// Ranking de militantes por volumen de punteo activo — /11-dashboards.md
+// sección 3.2: solo cantidad de personas en seguimiento por usuario, nunca el
+// contenido de esa clasificación. Expone actividad de otros usuarios, así que
+// exige `punteo.ver_todos` (verificado por quien llama, igual criterio que el
+// resto de este servicio).
+export async function obtenerRankingMilitantesPunteo() {
+  const agrupado = await prisma.punteoPersona.groupBy({
+    by: ["usuarioId"],
+    _count: true,
+    where: { estadoSeguimiento: { not: "sin_iniciar" } },
+  });
+
+  const usuarios = await prisma.usuario.findMany({
+    where: { id: { in: agrupado.map((a) => a.usuarioId) } },
+    select: { id: true, nombre: true },
+  });
+  const nombrePorId = new Map(usuarios.map((u) => [u.id, u.nombre]));
+
+  return agrupado
+    .map((a) => ({ usuarioId: a.usuarioId, nombre: nombrePorId.get(a.usuarioId) ?? "—", cantidad: a._count }))
+    .sort((a, b) => b.cantidad - a.cantidad);
+}
+
+// Distribución agregada de clasificación de punteo, sumando a través de
+// todos los usuarios — /11-dashboards.md sección 3.2. Nunca identifica qué
+// usuario clasificó a quién de qué forma en esta vista; solo el total por
+// categoría del catálogo `ClasificacionPunteo`.
+export async function obtenerDistribucionClasificacionPunteo() {
+  const clasificaciones = await prisma.clasificacionPunteo.findMany({
+    where: { activo: true },
+    orderBy: { orden: "asc" },
+  });
+
+  const agrupado = await prisma.punteoPersona.groupBy({
+    by: ["clasificacionId"],
+    _count: true,
+  });
+  const cantidadPorId = new Map(agrupado.map((a) => [a.clasificacionId, a._count]));
+
+  return clasificaciones.map((c) => ({
+    nombre: c.nombre,
+    color: c.color,
+    cantidad: cantidadPorId.get(c.id) ?? 0,
+  }));
+}
+
 export async function actualizarEstadoSeguimiento(
   usuarioId: string,
   personaId: string,

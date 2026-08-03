@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MdEvent, MdWarning, MdHistory } from "react-icons/md";
+import { MdEvent, MdWarning, MdHistory, MdAutoAwesome } from "react-icons/md";
 import { requerirPermiso, tienePermiso } from "@/lib/permisos/permisos";
 import { prisma } from "@/lib/prisma/client";
 import {
@@ -8,10 +8,12 @@ import {
   obtenerParticipacionPorTipoActividad,
   obtenerDistribucionPorCarreraYAnio,
   obtenerRankingActividadesPorAsistencia,
+  obtenerAgregadosPunteoAdmin,
   obtenerPanelOperativo,
   obtenerDashboardPersonal,
   type RangoFecha,
 } from "@/lib/servicios/dashboard.service";
+import { obtenerInsightsDashboardCacheados } from "@/lib/ia/insights-cache";
 import { Card } from "@/components/ui/Card";
 import { Select } from "@/components/ui/Select";
 import { Button } from "@/components/ui/Button";
@@ -110,6 +112,8 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
     sp.rango === "semana" || sp.rango === "cuatrimestre" || sp.rango === "todo" ? sp.rango : "mes";
   const filtros = { rango, carreraId: sp.carreraId, tipoActividadId: sp.tipoActividadId };
 
+  const puedeVerRankingMilitantes = await tienePermiso("punteo.ver_todos");
+
   const [
     carreras,
     tiposActividad,
@@ -118,6 +122,7 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
     participacionPorTipo,
     distribucionCarreraAnio,
     ranking,
+    agregadosPunteo,
     panelOperativo,
   ] = await Promise.all([
     prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
@@ -127,8 +132,19 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
     obtenerParticipacionPorTipoActividad(filtros),
     obtenerDistribucionPorCarreraYAnio(),
     obtenerRankingActividadesPorAsistencia(filtros),
+    obtenerAgregadosPunteoAdmin(puedeVerRankingMilitantes),
     obtenerPanelOperativo(),
   ]);
+
+  const insights = await obtenerInsightsDashboardCacheados({
+    rango: ETIQUETA_RANGO[rango],
+    kpis,
+    participacionPorTipo,
+    distribucionCarreraAnio,
+    rankingActividades: ranking.map((a) => ({ nombre: a.nombre, tasaAsistencia: a.tasaAsistencia })),
+    coberturaPunteo: agregadosPunteo.cobertura,
+    distribucionClasificacion: agregadosPunteo.distribucionClasificacion,
+  }).catch(() => []);
 
   const gruposCarreraAnio = Object.values(
     distribucionCarreraAnio.reduce<Record<string, { etiqueta: string; segmentos: { etiqueta: string; valor: number }[] }>>(
@@ -178,6 +194,27 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
         </form>
       </Card>
 
+      {insights.length > 0 && (
+        <Card>
+          <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-texto">
+            <MdAutoAwesome size={16} /> Lo más relevante de este período
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {insights.map((insight, i) => (
+              <li key={i} className="text-sm text-texto">
+                {insight.seccion ? (
+                  <a href={`#seccion-${insight.seccion}`} className="hover:underline">
+                    {insight.texto}
+                  </a>
+                ) : (
+                  insight.texto
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <TarjetaKpi
           etiqueta="Personas activas totales"
@@ -204,13 +241,13 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
+        <Card id="seccion-evolucion">
           <h2 className="mb-3 text-sm font-semibold text-texto">Personas cargadas en el tiempo</h2>
           <GraficoLinea
             puntos={evolucion.map((e) => ({ etiqueta: e.periodo, valor: e.cantidad }))}
           />
         </Card>
-        <Card>
+        <Card id="seccion-participacionPorTipo">
           <h2 className="mb-3 text-sm font-semibold text-texto">Participación por tipo de actividad</h2>
           <GraficoBarras
             items={participacionPorTipo.map((p) => ({
@@ -220,11 +257,11 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
             }))}
           />
         </Card>
-        <Card>
+        <Card id="seccion-distribucionCarrera">
           <h2 className="mb-3 text-sm font-semibold text-texto">Distribución de personas por carrera y año</h2>
           <GraficoBarrasApiladas grupos={gruposCarreraAnio} />
         </Card>
-        <Card>
+        <Card id="seccion-rankingActividades">
           <h2 className="mb-3 text-sm font-semibold text-texto">Ranking de actividades por asistencia</h2>
           {ranking.length === 0 ? (
             <p className="py-8 text-center text-sm text-texto-secundario">
@@ -248,6 +285,58 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
             </div>
           )}
         </Card>
+        <Card id="seccion-coberturaPunteo">
+          <h2 className="mb-3 text-sm font-semibold text-texto">Cobertura de punteo</h2>
+          {agregadosPunteo.cobertura.cobertura === null ? (
+            <p className="py-8 text-center text-sm text-texto-secundario">
+              Todavía no hay un padrón activo con personas habilitadas.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <p className="text-3xl font-semibold text-texto tabular-nums">
+                {Math.round(agregadosPunteo.cobertura.cobertura * 100)}%
+              </p>
+              <p className="text-sm text-texto-secundario">
+                {agregadosPunteo.cobertura.conPunteo} de {agregadosPunteo.cobertura.personasEnPadron} personas
+                habilitadas del padrón activo tienen al menos un punteo cargado.
+              </p>
+            </div>
+          )}
+        </Card>
+        <Card id="seccion-distribucionClasificacion">
+          <h2 className="mb-3 text-sm font-semibold text-texto">Distribución de clasificación de punteo</h2>
+          {agregadosPunteo.distribucionClasificacion.every((c) => c.cantidad === 0) ? (
+            <p className="py-8 text-center text-sm text-texto-secundario">Todavía no hay punteos cargados.</p>
+          ) : (
+            <GraficoBarras
+              items={agregadosPunteo.distribucionClasificacion.map((c) => ({
+                etiqueta: c.nombre,
+                valor: c.cantidad,
+                color: c.color ?? undefined,
+              }))}
+            />
+          )}
+        </Card>
+        {agregadosPunteo.rankingMilitantes && (
+          <Card>
+            <h2 className="mb-3 text-sm font-semibold text-texto">Ranking de militantes por volumen de punteo</h2>
+            {agregadosPunteo.rankingMilitantes.length === 0 ? (
+              <p className="py-8 text-center text-sm text-texto-secundario">
+                Todavía nadie tiene punteo en seguimiento.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {agregadosPunteo.rankingMilitantes.map((m, i) => (
+                  <div key={m.usuarioId} className="flex items-center gap-3 text-sm">
+                    <span className="w-5 shrink-0 text-texto-secundario">{i + 1}</span>
+                    <span className="flex-1 truncate text-texto">{m.nombre}</span>
+                    <span className="shrink-0 font-semibold text-texto tabular-nums">{m.cantidad}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
       </div>
 
       <Card>

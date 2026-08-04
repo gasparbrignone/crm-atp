@@ -43,3 +43,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# archivos fuente de padrones (datos personales reales, nunca al repo)
+/*.pdf

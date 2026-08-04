@@ -62,7 +62,9 @@ Detalle completo y justificación en `03-arquitectura.md`.
 │   │   ├── auditoria.service.ts notificaciones.service.ts busqueda.service.ts
 │   ├── ia/
 │   │   ├── cliente-ia.ts           # única puerta de entrada a la API de Gemini
-│   │   ├── deteccion-duplicados.ts normalizacion.ts lectura-padron.ts chatbot.ts insights.ts
+│   │   ├── deteccion-duplicados.ts normalizacion.ts lectura-padron-pdf.ts matching-padron.ts chatbot.ts insights.ts
+│   ├── identidad/                  # Motor de Resolución de Identidad — determinístico, sin IA (ver su README.md)
+│   │   ├── algoritmos.ts normalizar.ts motor-scoring.ts resolucion.ts
 │   ├── validaciones/               # esquemas de validación por entidad
 │   └── utils/
 ├── prisma/schema.prisma
@@ -103,6 +105,8 @@ Este proyecto corre sobre Next.js 16, que renombró la convención `middleware.t
 - **Importaciones masivas**: los fallos parciales se reportan fila por fila, nunca como error genérico.
 - **Catálogos configurables, no hardcodeados**: Carrera, TipoActividad, Etiqueta, ClasificacionPunteo son tablas, no enums de código ni de base de datos.
 - **Paginación obligatoria** en todo listado (Personas, Actividades, Historial); nunca se trae una tabla completa al cliente.
+- **La IA nunca es la fuente de verdad del sistema.** Asiste, resume, clasifica o propone — nunca decide de forma autónoma sobre datos de negocio. Toda función en `lib/ia/` que use un resultado de IA para decidir algo con efecto en la base de datos tiene que poder responder "¿qué pasa si la IA falla, tarda, o da una respuesta inestable?" — la respuesta nunca puede ser "el proceso se corrompe silenciosamente" ni "se aplica igual sin verificación". Preferir, cuando exista, una verificación determinística de respaldo sobre el resultado de la IA antes que confiar solo en un número de confianza autoreportado por el modelo (ver `REVISION-CRITICA-AUDITORIA-2026-08-04.md` sección 2 — este principio se redescubrió por bug real tres veces separadas el 2026-08-02/03 antes de declararse acá).
+- **Preferir un algoritmo determinístico siempre que la tarea sea estructuralmente bien definida** (matching exacto, similitud de strings, generación por plantilla), reservando la IA para tareas que requieren juicio semántico o de layout que no se puede reducir a una regla fija (lectura de PDF con formato irregular, conversación en lenguaje natural). Ver `15-ia.md` sección 1 y el mismo documento de revisión crítica citado arriba, sección 1.
 
 ## 5. Reglas de negocio transversales (RN-1 a RN-8)
 
@@ -142,7 +146,7 @@ De `01-vision-alcance.md` sección 9 — si alguno se corrige, hay que propagar 
 - S3: un usuario tiene un único rol principal (no roles múltiples).
 - S4: volumen esperado de Personas del orden de miles, no decenas de miles.
 - S5: una `Actividad` puede tener una `Actividad` padre opcional.
-- S6: el proveedor de IA es la API de Gemini (Google AI Studio) para todas las funcionalidades de IA — **corregido 2026-08-02**, era Anthropic (Claude) hasta que la cuenta se quedó sin saldo en medio de la carga real de un padrón. Gemini tiene cuota gratuita suficiente para el volumen real de ATP. `GEMINI_API_KEY` en `.env.local` y en las variables de entorno de Vercel (conseguir en https://aistudio.google.com/apikey). Modelo usado: `gemini-2.5-flash` (ver `lib/ia/cliente-ia.ts`).
+- S6: el proveedor de IA es la API de Gemini (Google AI Studio) para todas las funcionalidades de IA — **corregido 2026-08-02**, era Anthropic (Claude) hasta que la cuenta se quedó sin saldo en medio de la carga real de un padrón. Gemini tiene cuota gratuita suficiente para el volumen real de ATP. `GEMINI_API_KEY` en `.env.local` y en las variables de entorno de Vercel (conseguir en https://aistudio.google.com/apikey). Modelo usado: `gemini-3.1-flash-lite` (ver `MODELO_IA_LIVIANO` en `lib/ia/cliente-ia.ts` — `gemini-2.5-flash` daba 404 para keys nuevas, verificar contra la API real antes de asumir el nombre vigente). Desde el 2026-08-04, la comparación de nombres (duplicados de Personas, matching de padrón) ya NO usa este proveedor — ver `lib/identidad/README.md`.
 
 ## 8. Cómo navegar el resto de `/docs` (raíz del repo) según lo que se esté implementando
 

@@ -271,15 +271,26 @@ async function main() {
   // Umbral configurable de confianza para sugerencias de duplicados —
   // /15-ia.md sección 2.3 y /18-configuracion-sistema.md. Ajustable después
   // desde la UI de configuración (Fase 12) sin redeploy.
+  //
+  // Valor recalibrado el 2026-08-04 (era 0.7): desde ese día la confianza ya
+  // no la calcula un LLM, la calcula el Motor de Resolución de Identidad
+  // determinístico (lib/identidad/, ver motor-scoring.ts) — una escala de
+  // puntaje distinta, calibrada empíricamente contra un benchmark sintético
+  // (lib/identidad/BENCHMARK-RESULTADOS.md: 0.61 es el umbral óptimo medido
+  // para F1 con precisión ~99%; se usa 0.65 acá, un poco por encima, para
+  // dejar margen de seguridad sobre el techo de 0.6 que aplica la compuerta
+  // determinística de nombre mínimo del motor — ver motor-scoring.ts). El
+  // 0.7 anterior no tiene ningún significado en la escala nueva, no era
+  // "conservador", era simplemente el número de otra escala.
   console.log("Sembrando configuración del sistema...");
   await prisma.configuracionSistema.upsert({
     where: { clave: "umbral_confianza_duplicados" },
     update: {},
     create: {
       clave: "umbral_confianza_duplicados",
-      valor: "0.7",
+      valor: "0.65",
       descripcion:
-        "Puntaje mínimo (0 a 1) para que una coincidencia detectada por IA se sugiera automáticamente como posible duplicado.",
+        "Puntaje mínimo (0 a 1) para que el Motor de Resolución de Identidad (lib/identidad/) sugiera automáticamente una coincidencia como posible duplicado, o la vincule automáticamente en el caso de padrón.",
     },
   });
 

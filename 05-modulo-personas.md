@@ -71,7 +71,7 @@ El formulario permite agregar teléfonos y emails adicionales (no solo el princi
 
 ### 3.2 Verificación de duplicados en el momento del alta
 
-Antes de confirmar la creación, el sistema ejecuta una verificación de duplicados asistida por IA sobre los datos ingresados (ver el algoritmo completo en [`15-ia.md`](./15-ia.md#2-detección-inteligente-de-duplicados)). Si se detecta una coincidencia probable:
+Antes de confirmar la creación, el sistema ejecuta una verificación de duplicados sobre los datos ingresados — desde el 2026-08-04, resuelta por el Motor de Resolución de Identidad determinístico, no por IA (ver `lib/identidad/README.md` y el algoritmo completo en [`15-ia.md`](./15-ia.md#2-detección-de-duplicados)). Si se detecta una coincidencia probable:
 
 - Se muestra la ficha existente en paralelo al formulario, con los campos que coinciden resaltados.
 - El usuario elige entre **"Es la misma persona" → lo lleva al flujo de fusión** (sección 8.2) o **"Es una persona distinta" → confirma el alta igual**, quedando un registro en el historial de que la sugerencia fue descartada explícitamente (para no volver a sugerir la misma coincidencia repetidamente).
@@ -128,7 +128,7 @@ Acción reversible que oculta una ficha de los listados y búsquedas por defecto
 
 ### 8.2 Fusión de duplicados
 
-Flujo guiado, siempre iniciado por una sugerencia de IA o por una detección manual del usuario, nunca ejecutado automáticamente (principio rector de [`01-vision-alcance.md`](./01-vision-alcance.md#8-principios-de-diseño-rectores)):
+Flujo guiado, siempre iniciado por una sugerencia del Motor de Resolución de Identidad (ver sección 3.2) o por una detección manual del usuario, nunca ejecutado automáticamente (principio rector de [`01-vision-alcance.md`](./01-vision-alcance.md#8-principios-de-diseño-rectores)):
 
 1. El usuario ve las dos fichas lado a lado, campo por campo.
 2. Para cada campo con valores distintos, elige cuál conservar (por defecto, se sugiere el valor no vacío o el más reciente).

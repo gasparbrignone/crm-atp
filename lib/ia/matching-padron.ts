@@ -1,21 +1,20 @@
 import { prisma } from "@/lib/prisma/client";
-import {
-  obtenerClienteIA,
-  MODELO_IA_LIVIANO,
-  SIN_PENSAMIENTO,
-  generarConReintentos,
-} from "@/lib/ia/cliente-ia";
+import { evaluarCandidatos } from "@/lib/identidad/resolucion";
 
 // Matching de PadronEntrada contra Persona — /09-modulo-padron-electoral.md
 // sección 5: DNI exacto primero (señal determinística), después nombre
-// difuso "usando el mismo mecanismo de similitud que la detección de
-// duplicados de personas" (/15-ia.md sección 2). A diferencia de la
-// detección de duplicados de Fase 2 (que puede dar de alta una Persona sola
-// cuando no hay candidatos), acá una entrada sin candidatos queda
-// `sin_coincidencia`: el alta de una ficha nueva a partir del padrón es
-// siempre una decisión humana explícita en la revisión manual (sección 6),
-// nunca automática — el padrón no es la fuente de verdad de quién existe,
-// solo de quién puede votar.
+// difuso usando el mismo Motor de Resolución de Identidad determinístico que
+// la detección de duplicados de personas (/lib/identidad/, ver su README) —
+// ya NO llama a ningún modelo de IA desde el 2026-08-04 (ver justificación
+// completa en /REVISION-CRITICA-AUDITORIA-2026-08-04.md sección 1.2: acá el
+// riesgo de depender de un número de confianza inestable de un LLM era
+// incluso mayor que en duplicados de personas, porque este resultado define
+// `estado_padron` — quién puede votar). A diferencia de la detección de
+// duplicados de Fase 2 (que puede dar de alta una Persona sola cuando no hay
+// candidatos), acá una entrada sin candidatos queda `sin_coincidencia`: el
+// alta de una ficha nueva a partir del padrón es siempre una decisión humana
+// explícita en la revisión manual (sección 6), nunca automática — el padrón
+// no es la fuente de verdad de quién existe, solo de quién puede votar.
 
 export type ResultadoMatchingPadron =
   | { tipo: "vinculado_automatico"; personaId: string; confianza: number }
@@ -62,55 +61,15 @@ async function obtenerCandidatosPorNombre(nombreCompleto: string): Promise<Candi
   return candidatos;
 }
 
-function extraerJson(texto: string): unknown {
-  const match = texto.match(/\{[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
-  }
-}
-
-function normalizarToken(texto: string): string {
-  return texto
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
-}
-
-// Bug real encontrado en auditoría 2026-08-03 (reportado por Gaspar con
-// capturas de vinculaciones automáticas evidentemente erróneas: "Barroso,
-// Constanza" vinculada a "cindy barroso", "Cejas, Agustina" Y "Cejas,
-// Damaris" vinculadas ambas a la misma "Candela cejas", etc.). El modelo
-// liviano sin razonamiento (gemini-3.1-flash-lite, thinkingBudget 0) resultó
-// NO CONFIABLE para calibrar una confianza numérica en el caso "coincide el
-// apellido pero el nombre de pila es completamente distinto" — la prueba
-// definitiva: la MISMA fila de padrón ("Chazarreta, Melani Belen" vs
-// candidata "iara chazarreta") procesada dos veces dio 60% una vez
-// (correctamente rechazada) y 85% la otra (vinculada automático, mal). No es
-// un problema de umbral — es que el número que devuelve la IA para este caso
-// puntual no es estable ni confiable. Por eso esto no puede depender solo de
-// la confianza autoreportada: se exige además, en código, que el nombre de
-// pila de la entrada comparta al menos un token razonable con el de la
-// candidata antes de aceptar un vínculo automático. Si no lo comparte, se
-// fuerza a revisión humana (`pendiente`) sin importar qué confianza haya
-// dicho la IA — nunca se sube el riesgo de vincular mal a alguien en un
-// padrón que define quién puede votar.
-export function compartenNombreDePila(nombreCompletoOriginal: string, nombreCandidato: string): boolean {
-  const partes = nombreCompletoOriginal.split(",");
-  const nombrePadron = (partes.length > 1 ? partes[1] : partes[0]) ?? "";
-  const tokensPadron = normalizarToken(nombrePadron)
-    .split(/\s+/)
-    .filter((t) => t.length >= 3);
-  const tokensCandidato = normalizarToken(nombreCandidato)
-    .split(/\s+/)
-    .filter((t) => t.length >= 3);
-
-  if (tokensPadron.length === 0 || tokensCandidato.length === 0) return true;
-
-  return tokensPadron.some((tp) => tokensCandidato.some((tc) => tp === tc || tp.includes(tc) || tc.includes(tp)));
-}
+// Piso por debajo del cual el motor considera que no hay evidencia real de
+// coincidencia — coherente con la banda de "revisión manual" calibrada en
+// lib/identidad/BENCHMARK-RESULTADOS.md (0.4-umbral). Por debajo de este
+// piso es `sin_coincidencia` (descarte seguro, sin fricción de revisión
+// innecesaria — el mismo criterio que ya regía acá desde el bug real
+// 2026-08-02 de revisiones sin sentido por coincidencias espurias de un
+// token corto y común); entre el piso y el umbral configurado es `pendiente`
+// (hay evidencia real pero no alcanza para decidir solo).
+const CONFIANZA_MINIMA_PARA_REVISION = 0.4;
 
 export async function buscarPersonaParaEntradaPadron(
   entrada: { dni: string; nombreCompletoOriginal: string },
@@ -124,81 +83,32 @@ export async function buscarPersonaParaEntradaPadron(
   const candidatos = await obtenerCandidatosPorNombre(entrada.nombreCompletoOriginal);
   if (candidatos.length === 0) return { tipo: "sin_coincidencia" };
 
-  const prompt = `Tarea: decidir si una entrada de un padrón electoral universitario corresponde a alguna persona ya cargada en el sistema.
-
-Entrada del padrón (el DNI no coincidió con nadie, así que se compara solo por nombre):
-${JSON.stringify({ nombreCompletoOriginal: entrada.nombreCompletoOriginal })}
-
-Personas candidatas ya cargadas (coinciden en algún token del nombre):
-${JSON.stringify(candidatos.map((c) => ({ id: c.id, nombre: c.nombre, apellido: c.apellido })))}
-
-Considerá que el nombre del padrón puede venir en cualquier orden ("Apellido, Nombre" o "Nombre Apellido"), con mayúsculas distintas, sin acentos, o con nombres compuestos. El apellido es la señal fuerte: si el apellido no coincide (aunque sea con variantes de tipeo o acentos), NO es la misma persona, sin importar cuántos nombres de pila compartan — nombres de pila comunes (Ana, María, Luis, José...) no alcanzan por sí solos, ni siquiera si coinciden varios. Si ninguna candidata es razonablemente la misma persona, decilo explícitamente.
-
-Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
-{"personaId": "<id de la candidata o null>", "confianza": <número entre 0 y 1>, "motivo": "<explicación breve en español>"}`;
-
-  const cliente = obtenerClienteIA();
-  const respuesta = await generarConReintentos(() =>
-    cliente.models.generateContent({
-      model: MODELO_IA_LIVIANO,
-      contents: prompt,
-      config: {
-        maxOutputTokens: 300,
-        responseMimeType: "application/json",
-        thinkingConfig: SIN_PENSAMIENTO,
-      },
-    }),
+  // Motor de Resolución de Identidad determinístico (ver
+  // /lib/identidad/README.md) — reemplaza la llamada a Gemini que hacía este
+  // paso hasta el 2026-08-04. El nombre del padrón puede venir en cualquier
+  // orden ("Apellido, Nombre" o "Nombre Apellido"); tokenizarNombrePersona()
+  // (lib/identidad/normalizar.ts) ya maneja ambos formatos.
+  const { mejor } = evaluarCandidatos(
+    entrada.nombreCompletoOriginal,
+    candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}` })),
   );
 
-  const texto = respuesta.text;
-  if (!texto) {
-    return { tipo: "pendiente", motivo: "No se pudo interpretar la respuesta de la IA.", candidatos };
-  }
-
-  const json = extraerJson(texto) as
-    | { personaId: string | null; confianza: number; motivo: string }
-    | null;
-
-  if (!json || typeof json.confianza !== "number") {
-    return { tipo: "pendiente", motivo: "No se pudo interpretar la respuesta de la IA.", candidatos };
-  }
-  // La IA está segura de que ninguno de los candidatos (encontrados por
-  // coincidencia difusa de tokens del nombre) es la misma persona — según
-  // /09-modulo-padron-electoral.md sección 5, eso es "sin_coincidencia", no
-  // "pendiente": `pendiente` es para cuando SÍ hay un candidato pero la
-  // confianza queda por debajo del umbral, no para descartes seguros. Tratar
-  // esto como pendiente generaba decenas de revisiones sin sentido por cada
-  // coincidencia espuria de un token corto y común (ej. "Luis" dentro de
-  // "Luisina") — bug real 2026-08-02, visto en producción.
-  if (!json.personaId) {
+  if (!mejor || mejor.confianza < CONFIANZA_MINIMA_PARA_REVISION) {
     return { tipo: "sin_coincidencia" };
   }
-  if (!candidatos.some((c) => c.id === json.personaId)) {
-    // La IA devolvió un id que no está entre los candidatos reales — no es
-    // un descarte seguro, algo salió raro en la respuesta, así que sí amerita
-    // ojo humano.
+  if (mejor.confianza < umbral) {
     return {
       tipo: "pendiente",
-      motivo: json.motivo ?? "La IA devolvió una respuesta inconsistente para esta fila.",
-      candidatos,
-    };
-  }
-  if (json.confianza < umbral) {
-    return {
-      tipo: "pendiente",
-      motivo: `Coincidencia de baja confianza (${Math.round(json.confianza * 100)}%): ${json.motivo}`,
+      motivo: `Coincidencia de confianza media (${Math.round(mejor.confianza * 100)}%): ${mejor.explicacion.join("; ")}`,
       candidatos,
     };
   }
 
-  const candidataElegida = candidatos.find((c) => c.id === json.personaId)!;
-  if (!compartenNombreDePila(entrada.nombreCompletoOriginal, candidataElegida.nombre)) {
-    return {
-      tipo: "pendiente",
-      motivo: `La IA dijo ${Math.round(json.confianza * 100)}% de confianza, pero el nombre de pila no coincide en absoluto con "${candidataElegida.nombre}" — se fuerza revisión humana en vez de confiar en el número solo. Motivo de la IA: ${json.motivo}`,
-      candidatos,
-    };
-  }
-
-  return { tipo: "vinculado_automatico", personaId: json.personaId, confianza: json.confianza };
+  // No hace falta un chequeo adicional de "comparten nombre de pila" acá: la
+  // compuerta determinística equivalente ya vive dentro del motor de scoring
+  // (compartenTokenDeNombre en motor-scoring.ts) y ya topeó `mejor.confianza`
+  // a 0.6 en ese caso — si llegamos hasta acá con confianza >= umbral, es
+  // porque el motor ya verificó que el nombre de pila SÍ comparte evidencia
+  // real, no solo el apellido.
+  return { tipo: "vinculado_automatico", personaId: mejor.id, confianza: mejor.confianza };
 }

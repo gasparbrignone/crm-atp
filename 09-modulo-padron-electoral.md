@@ -56,7 +56,7 @@ borrador → activo → cerrado
 Para cada `PadronEntrada`, el sistema intenta vincularla (`persona_id`) con una `Persona` existente, en este orden de prioridad:
 
 1. **Coincidencia exacta de DNI.** Señal más fuerte posible — si `Persona.dni` coincide exactamente, se vincula automáticamente con `estado_matching = vinculado_automatico` y `confianza_matching = 1.0`.
-2. **Coincidencia difusa de nombre y apellido** (cuando no hay DNI cargado en la ficha existente, o el padrón no trae DNI legible), usando el mismo mecanismo de similitud que la detección de duplicados de personas (ver [`15-ia.md`](./15-ia.md#2-detección-inteligente-de-duplicados)). Por debajo de un umbral de confianza configurable, la entrada queda `pendiente` para revisión manual en lugar de vincularse automáticamente.
+2. **Coincidencia difusa de nombre y apellido** (cuando no hay DNI cargado en la ficha existente, o el padrón no trae DNI legible), usando el mismo Motor de Resolución de Identidad determinístico que la detección de duplicados de personas — no IA, desde el 2026-08-04 (ver `lib/identidad/README.md` y [`15-ia.md`](./15-ia.md#2-detección-de-duplicados)). Por debajo de un umbral de confianza configurable, la entrada queda `pendiente` para revisión manual en lugar de vincularse automáticamente.
 3. **Sin coincidencia**: la entrada queda `sin_coincidencia`. Desde la revisión manual (sección 6), el usuario puede vincularla a una persona existente encontrada por búsqueda manual, o dar de alta una ficha nueva a partir de los datos de la entrada del padrón.
 
 ## 6. Revisión manual del matching

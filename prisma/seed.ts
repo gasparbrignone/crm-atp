@@ -296,6 +296,46 @@ async function main() {
     },
   });
 
+  // Parámetros generales — /18-configuracion-sistema.md sección 8.
+  console.log("Sembrando parámetros generales del sistema...");
+  const PARAMETROS_GENERALES: { clave: string; valor: string; descripcion: string }[] = [
+    {
+      clave: "nombre_organizacion",
+      valor: "ATP",
+      descripcion: "Nombre de la organización, mostrado en la interfaz y en emails.",
+    },
+    {
+      clave: "dias_retencion_notificaciones_leidas",
+      valor: "30",
+      descripcion:
+        "Días tras los cuales una notificación leída deja de mostrarse en el panel (no se borra, se oculta; sigue disponible en el historial completo).",
+    },
+    {
+      clave: "formato_export_default",
+      valor: "csv",
+      descripcion: "Formato preferido por defecto al exportar (csv o excel).",
+    },
+    {
+      clave: "email_notificaciones_activo",
+      valor: "false",
+      descripcion:
+        "Interruptor general de envío de emails de notificación (resumen/digest). Requiere RESEND_API_KEY configurada en el entorno para tener efecto.",
+    },
+    {
+      clave: "dias_inactividad_punteo_recordatorio",
+      valor: "30",
+      descripcion:
+        "Días sin actualizar el estado_seguimiento de un PunteoPersona antes de recordarle al usuario dueño que le dé seguimiento — /13-notificaciones.md sección 3.",
+    },
+  ];
+  for (const parametro of PARAMETROS_GENERALES) {
+    await prisma.configuracionSistema.upsert({
+      where: { clave: parametro.clave },
+      update: {},
+      create: parametro,
+    });
+  }
+
   console.log("Seed de Fase 0 completado.");
 }
 

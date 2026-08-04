@@ -2,6 +2,7 @@ import Papa from "papaparse";
 import { prisma } from "@/lib/prisma/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import { notificarImportacionFinalizada } from "@/lib/servicios/notificaciones.service";
 import { personaFormSchema } from "@/lib/validaciones/persona.validation";
 import { resolverCarreraSemantica } from "@/lib/ia/normalizacion";
 import type { CampoPersonaImportable } from "@/lib/utils/csv-mapping";
@@ -189,6 +190,14 @@ export async function procesarImportacionPersonasCsv({
     accion: "importar",
     usuarioId,
     metadata: { entidadDestino: "Persona", exitosas, conError, duplicados },
+  });
+
+  await notificarImportacionFinalizada({
+    jobId: job.id,
+    usuarioId,
+    entidadDestino: "Personas",
+    exitosas,
+    conError,
   });
 
   return jobFinal;

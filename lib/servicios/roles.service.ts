@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { RolConUsuariosError } from "@/lib/servicios/usuarios.service";
+import { notificarCambioPermisosRol } from "@/lib/servicios/notificaciones.service";
 
 export class RolDeSistemaError extends Error {
   constructor() {
@@ -76,6 +77,7 @@ export async function actualizarPermisosRol(rolId: string, permisoIds: string[],
     usuarioId: actorId,
     campo: "permisos",
   });
+  await notificarCambioPermisosRol(rolId);
 }
 
 export async function actualizarDatosRol(

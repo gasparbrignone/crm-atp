@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import { notificarCambioRolUsuario } from "@/lib/servicios/notificaciones.service";
 
 export class UltimoAdministradorError extends Error {
   constructor() {
@@ -196,6 +197,8 @@ export async function cambiarRolUsuario(usuarioId: string, nuevoRolId: string, a
     valorAnterior: usuario.rol.nombre,
     valorNuevo: nuevoRol.nombre,
   });
+
+  await notificarCambioRolUsuario(usuarioId, usuario.rol.nombre, nuevoRol.nombre);
 
   return actualizado;
 }

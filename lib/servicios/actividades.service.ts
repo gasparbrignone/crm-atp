@@ -1,6 +1,10 @@
 import { Prisma, type Actividad, type EstadoActividad } from "@prisma/client";
 import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
+import {
+  notificarActividadCancelada,
+  notificarActividadReprogramada,
+} from "@/lib/servicios/notificaciones.service";
 import type { ActividadFormValues } from "@/lib/validaciones/actividad.validation";
 
 export class ActividadCicloError extends Error {
@@ -267,6 +271,16 @@ export async function actualizarActividad(
     await aplicarCarreraAnioPorDefectoAParticipantes(id, usuarioId);
   }
 
+  // Reprogramación = cambio de fechaInicio (sin cambio de estado, ese caso lo
+  // cubre cambiarEstadoActividad más abajo) — /13-notificaciones.md sección 3.
+  if ("fechaInicio" in cambios) {
+    await notificarActividadReprogramada(
+      id,
+      actual.fechaInicio,
+      actualizada.fechaInicio,
+    );
+  }
+
   return actualizada;
 }
 
@@ -343,6 +357,10 @@ export async function cambiarEstadoActividad(
     valorAnterior: actual.estado,
     valorNuevo: nuevoEstado,
   });
+
+  if (nuevoEstado === "cancelada") {
+    await notificarActividadCancelada(id);
+  }
 
   return actualizada;
 }

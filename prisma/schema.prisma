@@ -146,6 +146,11 @@ enum RolMensajeChatbot {
   asistente
 }
 
+enum FrecuenciaDigestEmail {
+  diario
+  semanal
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // 4. Catálogos base — /04-modelo-datos.md sección 4
 // ─────────────────────────────────────────────────────────────────────────
@@ -357,6 +362,12 @@ model Usuario {
   ultimoAcceso  DateTime?
   fechaCreacion DateTime      @default(now())
 
+  // Preferencias de notificación — /13-notificaciones.md sección 5: el canal
+  // in-app nunca se puede desactivar, solo el resumen por email es opcional.
+  recibirDigestEmail    Boolean               @default(false)
+  frecuenciaDigestEmail FrecuenciaDigestEmail  @default(diario)
+  fechaUltimoDigestEmail DateTime?
+
   personasCreadas             Persona[]              @relation("PersonaCreadoPor")
   personasModificadas         Persona[]              @relation("PersonaModificadoPor")
   actividadesResponsable      Actividad[]            @relation("ActividadResponsable")
@@ -535,11 +546,19 @@ model Notificacion {
   mensaje              String
   entidadRelacionada   String?
   entidadRelacionadaId String?
+  // Clave estable del disparador que generó el evento (ej. "punteo_inactivo",
+  // "actividad_cancelada") — /13-notificaciones.md sección 7: la idempotencia
+  // del disparador se verifica sobre esta clave + entidadRelacionadaId +
+  // usuarioId, independiente de entidadRelacionada (que solo define el enlace
+  // de la UI y puede repetirse entre disparadores distintos sobre una misma
+  // entidad, ej. una Actividad cancelada Y con cupo liberado el mismo día).
+  disparador           String?
   leida                Boolean          @default(false)
   fechaCreacion        DateTime         @default(now())
   fechaLectura         DateTime?
 
   @@index([usuarioId, leida])
+  @@index([disparador, entidadRelacionadaId, usuarioId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

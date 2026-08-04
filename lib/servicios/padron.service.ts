@@ -5,6 +5,11 @@ import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
 import { prepararLotesPadronPdf, leerLotePadronPdf } from "@/lib/ia/lectura-padron-pdf";
+import {
+  notificarImportacionFinalizada,
+  notificarPadronActivado,
+  notificarPendientesRevisionPadron,
+} from "@/lib/servicios/notificaciones.service";
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 import type { Prisma, TipoPadronElectoral } from "@prisma/client";
 
@@ -376,6 +381,17 @@ export async function importarEntradasPadronCsv({
     metadata: { procesadas: resultado.procesadas, omitidas: resultado.omitidas, totalFilas: filas.length },
   });
 
+  await notificarImportacionFinalizada({
+    jobId: padronId,
+    usuarioId,
+    entidadDestino: "Padrón electoral",
+    exitosas: resultado.procesadas,
+    conError: resultado.omitidas,
+  });
+
+  const resumen = await obtenerResumenPadron(padronId);
+  await notificarPendientesRevisionPadron(padronId, resumen.pendiente);
+
   return resultado;
 }
 
@@ -511,6 +527,16 @@ export async function procesarSiguienteLotePadron(
       usuarioId,
       metadata: { origen: "pdf", lotesTotales: padron.lotesTotales },
     });
+
+    const resumenFinal = await obtenerResumenPadron(padronId);
+    await notificarImportacionFinalizada({
+      jobId: padronId,
+      usuarioId,
+      entidadDestino: "Padrón electoral",
+      exitosas: resumenFinal.total - resumenFinal.pendiente,
+      conError: resumenFinal.pendiente,
+    });
+    await notificarPendientesRevisionPadron(padronId, resumenFinal.pendiente);
   }
 
   return {
@@ -651,6 +677,8 @@ export async function activarPadron(padronId: string, usuarioId: string) {
     usuarioId: null,
     metadata: { proceso: "activacion_padron", tipo: padronAActivar.tipo, activadoPorId: usuarioId },
   });
+
+  await notificarPadronActivado(padronId);
 
   return prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
 }

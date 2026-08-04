@@ -10,8 +10,10 @@ import {
   MdFactCheck,
   MdChatBubbleOutline,
 } from "react-icons/md";
+import Link from "next/link";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { BuscadorGlobal } from "@/components/buscador/BuscadorGlobal";
+import { CampanaNotificaciones } from "@/components/layout/CampanaNotificaciones";
 import { Sidebar, type EnlaceNav } from "@/components/layout/Sidebar";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { obtenerUsuarioActual, tienePermiso } from "@/lib/permisos/permisos";
@@ -105,12 +107,16 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
           <div className="flex items-center gap-3">
             <BuscadorGlobal />
-            <span className="hidden text-sm text-texto-secundario sm:inline">
+            <CampanaNotificaciones />
+            <Link
+              href="/perfil"
+              className="hidden text-sm text-texto-secundario hover:text-texto sm:inline"
+            >
               {usuario.nombre} {usuario.apellido}
               <span className="ml-1.5 rounded-full bg-fondo-hover px-2 py-0.5 text-xs font-medium text-texto-secundario">
                 {usuario.rol.nombre}
               </span>
-            </span>
+            </Link>
             <ThemeToggle />
             <form action={cerrarSesion}>
               <button

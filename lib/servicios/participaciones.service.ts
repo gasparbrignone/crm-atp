@@ -10,6 +10,7 @@ import {
   normalizarEmail,
 } from "@/lib/ia/normalizacion";
 import { revincularPersonaNuevaConPadronesPendientes } from "@/lib/servicios/padron.service";
+import { notificarImportacionFinalizada } from "@/lib/servicios/notificaciones.service";
 import type { CampoInscripcionImportable } from "@/lib/utils/csv-mapping-inscripciones";
 import { partirNombreYApellido } from "@/lib/utils/nombre-padron";
 
@@ -494,6 +495,14 @@ export async function importarParticipacionesCsv({
     accion: "importar",
     usuarioId,
     metadata: { entidadDestino: "Participacion", actividadId, exitosas, conError, altasNuevas },
+  });
+
+  await notificarImportacionFinalizada({
+    jobId: job.id,
+    usuarioId,
+    entidadDestino: "Participaciones",
+    exitosas,
+    conError,
   });
 
   return { ...jobFinal, altasNuevas };

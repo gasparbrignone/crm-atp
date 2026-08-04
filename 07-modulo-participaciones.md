@@ -46,6 +46,8 @@ Cada fila de `Participacion` responde a la pregunta "¿cómo participó esta per
 
 ### 3.3 Lista de espera
 
+> **Pendiente de implementación (2026-08-04)**: ni el indicador visual de "excedente de cupo" ni la notificación de cupo liberado existen todavía en el código — corrección sobre `REVISION-CRITICA-AUDITORIA-2026-08-04.md` "Hallazgos nuevos" punto 4, que había caracterizado esto como una falta del modelo de datos; en realidad el modelo ya está bien pensado para no necesitar un estado nuevo (ver el párrafo original abajo), lo que falta es la lógica de UI y el disparador de notificación. Al construir Fase 11 (Notificaciones) se omitió deliberadamente este disparador por no tener dónde engancharlo todavía — queda pendiente para cuando se construya el indicador de excedente descripto acá.
+
 Cuando una actividad alcanza su cupo máximo, las inscripciones adicionales quedan con estado `inscripto` pero marcadas internamente como excedentes de cupo (indicador visual en la UI, no un estado nuevo en el modelo de datos, para no complejizar el enum de `Participacion.estado`). Si se libera un cupo (una cancelación), el sistema sugiere automáticamente a la siguiente persona en la lista de espera, vía notificación al responsable de la actividad (ver [`13-notificaciones.md`](./13-notificaciones.md)).
 
 ## 4. Registro de asistencia

@@ -116,6 +116,8 @@ Sobre una selección múltiple del listado: asignar etiqueta, exportar selecció
 
 ## 7. Etiquetado
 
+> **Pendiente de implementación (2026-08-04)**: esta sección está construida solo parcialmente. El catálogo `Etiqueta` existe (modelo de datos, filtro en el listado de Personas) y su gestión centralizada ya está en `/configuracion` (creación, edición, desactivación, fusión de duplicadas — ver `18-configuracion-sistema.md`). Lo que **no existe todavía** es la asignación de etiquetas desde la ficha o el listado de una Persona (el selector múltiple del alta, la gestión inline en la pestaña "Etiquetas" de la ficha, y la acción masiva "asignar etiqueta" del listado, todos descriptos abajo) — hallazgo de `REVISION-CRITICA-AUDITORIA-2026-08-04.md` sección "Hallazgos nuevos" punto 3, no trackeado hasta ahora. Candidato natural para la próxima sesión de trabajo en el módulo de Personas.
+
 - Cualquier usuario con permiso `personas.editar` puede asignar etiquetas existentes; crear una etiqueta nueva desde el selector requiere el mismo permiso (no un permiso adicional, para no friccionar el uso cotidiano).
 - Las etiquetas son compartidas por toda la organización (no son privadas por usuario, a diferencia de la clasificación de punteo — ver la distinción explícita en [`08-modulo-punteo-electoral.md`](./08-modulo-punteo-electoral.md#1-distinción-clave-etiqueta-vs-clasificación-de-punteo)).
 - Gestión del catálogo global de etiquetas (renombrar, fusionar dos etiquetas equivalentes, desactivar) vive en [`18-configuracion-sistema.md`](./18-configuracion-sistema.md).

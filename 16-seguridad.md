@@ -22,6 +22,8 @@
 
 ## 1. Alcance de este documento
 
+**Estado actual (2026-08-04): fase de construcción, sin datos reales de terceros cargados todavía** — ver `CLAUDE.md` sección 10 y `REVISION-CRITICA-AUDITORIA-2026-08-04.md` sección 0. El checklist de la sección 13 de este documento es la condición de salida de esta etapa, no una restricción activa sobre el desarrollo hoy — pero todo lo demás de este documento (marco legal, clasificación de datos sensibles) sigue aplicando igual: no depende de si hay datos reales cargados en este momento puntual, depende de qué va a pasar el día que los haya.
+
 Este documento centraliza todas las decisiones de seguridad y privacidad del sistema. Otros documentos (particularmente [`08-modulo-punteo-electoral.md`](./08-modulo-punteo-electoral.md) y [`10-usuarios-roles-permisos.md`](./10-usuarios-roles-permisos.md)) hacen referencia a las políticas definidas acá en lugar de redefinirlas, para que exista una única fuente de verdad sobre seguridad.
 
 **Aviso**: las secciones de esta documentación que tratan sobre marco legal (sección 5) son información general orientativa, recogida y verificada al momento de redactar este documento, **no un dictamen legal**. Antes de operar el sistema con datos reales de personas, se recomienda una revisión puntual con asesoría legal profesional, en particular sobre el módulo de punteo (sección 6).

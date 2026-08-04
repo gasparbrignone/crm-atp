@@ -1,63 +1,52 @@
 Estamos desarrollando el CRM ATP (agrupación estudiantil, Facultad de Ciencias Médicas, UNR) en `c:\Users\gaspar\Desktop\crm atp`. Repo: https://github.com/gasparbrignone/crm-atp. Deploy en producción: https://crm-atp.vercel.app.
 
-Leé primero `CLAUDE.md` en la raíz (constitución del proyecto) y `20-roadmap.md` para el estado de las fases. También tenés memoria persistente entre sesiones (carpeta `memory/` del proyecto) — ya tiene entradas sobre cómo trabaja Gaspar y lecciones de esta sesión, revisala.
+Leé primero `CLAUDE.md` en la raíz (constitución del proyecto, incluye el estado real de fase del proyecto en la sección 10) y `20-roadmap.md` para el estado de las fases. También tenés memoria persistente entre sesiones (carpeta `memory/` del proyecto) — revisala, tiene entradas sobre cómo trabaja Gaspar y lecciones de sesiones anteriores.
 
-## 🔴 Retomar esto primero
+## Estado del proyecto (actualizado 2026-08-04, cierre de sesión)
 
-**Gaspar está en medio de cargar el padrón real de Consejo Directivo - Medicina** vía `/padron`. Hay un padrón en la base llamado **"CD FONO 2026"** (¡el nombre está mal, el archivo subido es el de Medicina! `id` real: buscar con `prisma.padronElectoral.findMany()`, va a aparecer con `archivoOrigenId` conteniendo "EM-06-03-26.pdf") que quedó a mitad de camino: **lote 1 de 14 procesado (53 entradas)**, lotes 2 a 14 todavía pendientes. La importación es incremental (un lote por vez, con barra de progreso) — es normal que haya que seguir apretando el botón o que el navegador reintente solo.
+**No está en producción real todavía** — el único dato personal cargado es el de Gaspar, para pruebas (ver `CLAUDE.md` sección 10 y `REVISION-CRITICA-AUDITORIA-2026-08-04.md` sección 0). Esto importa para calibrar cuánto peso darle a los checklists de seguridad/legal: son condición de salida de esta etapa, no una restricción activa sobre el ritmo de desarrollo hoy.
 
-**Antes de asumir que algo está roto**: correr `prisma.padronElectoral.findMany({ include: { _count: { select: { entradas: true }}}})` para ver el estado real (`lotesProcesados`/`lotesTotales`), y revisar `npx vercel logs crm-atp.vercel.app` para el error real si algo falla — no asumir la causa sin mirar el log.
+**Fases del roadmap**: 0 a 12 completas y deployadas. Fase 13 (Hardening final: RLS real, MFA, rotación de credenciales, separación dev/prod, simulacro de backup) deliberadamente diferida — no antes de cargar el primer dato real de un tercero, y no antes de que el esquema deje de cambiar tan seguido.
 
-## Qué se rompió y arregló hoy (2026-08-02), en cadena — para no repetir los mismos errores
+## Qué se hizo en la última sesión (2026-08-04) — leer antes de asumir nada
 
-1. **Timeout de 300s en la importación de padrón**: la lectura de PDF + el matching corrían fila por fila en serie. Se paralelizó todo (`lib/ia/lectura-padron-pdf.ts`, `lib/servicios/padron.service.ts`) y se rediseñó como **procesamiento incremental por lote** (el cliente pide "el siguiente lote" repetidas veces — ver `ImportadorPadronPdf` y `procesarSiguienteLotePadronAction`), porque ninguna función serverless aguanta los varios minutos que puede tardar un padrón real completo.
-2. **La cuenta de Anthropic se quedó sin saldo** en medio de una carga real ("credit balance is too low") → **se migró todo el proveedor de IA a Gemini** (Google AI Studio, gratis). Afecta `lib/ia/cliente-ia.ts` (nuevo, reemplaza a `cliente-anthropic.ts`) y los 4 archivos que llaman a IA: `lectura-padron-pdf.ts`, `matching-padron.ts`, `deteccion-duplicados.ts`, `normalizacion.ts`. Actualiza el supuesto S6 en `CLAUDE.md`/`01-vision-alcance.md`/`15-ia.md`/`03-arquitectura.md`/`16-seguridad.md`.
-3. **Encadenado con la migración, varios bugs reales de la migración misma** (todos ya arreglados, ver commits del día — `git log --oneline` — para el detalle exacto de cada uno):
-   - `gemini-2.5-flash`/`gemini-2.5-flash-lite` devuelven 404 para API keys nuevas ("no longer available to new users") → se usa `gemini-3.1-flash-lite`. **No asumir el nombre de modelo vigente de Gemini sin verificarlo contra la API real** (`client.models.list()`) — el catálogo cambia rápido.
-   - Los modelos vigentes de Gemini "piensan" por defecto y esas "thoughts" salen del mismo presupuesto que `maxOutputTokens` → se desactiva siempre con `thinkingConfig: { thinkingBudget: 0 }` (constante `SIN_PENSAMIENTO` en `cliente-ia.ts`), porque ninguna tarea de este módulo necesita razonamiento profundo.
-   - La cuota gratuita real de Gemini es **15 requests/minuto** para `gemini-3.1-flash-lite` (medido contra la cuenta real, no un valor de la documentación) → hay un limitador de tasa compartido en `cliente-ia.ts` (ventana deslizante) para todo el módulo de IA, no alcanza con bajar la concurrencia de un solo archivo.
-   - El plan de Vercel es **Hobby (gratuito)**, no Pro — se asumió mal dos veces seguidas en direcciones opuestas (primero 800s de un supuesto plan Pro, después se sobrecorrigió a 60s). El número real confirmado contra la documentación oficial de Vercel: **300s de default y de máximo en Hobby con Fluid Compute**, no configurable más alto. Ver `export const maxDuration` en `app/(app)/padron/[id]/importar/page.tsx`.
-   - El matching de padrón (`lib/ia/matching-padron.ts`) vinculaba automático por **nombres de pila compartidos** ignorando el apellido (ej. "Abraham, Ana Paula" vinculado a una "Ana Paula Ascúa" sin relación real, con confianza 0.95) — se corrigió para anclar la búsqueda de candidatos solo en apellido.
-   - El mismo matching marcaba como "pendiente" (revisión manual) descartes donde la propia IA ya decía explícitamente "no es la misma persona" — según `09-modulo-padron-electoral.md` sección 5, eso debe ser `sin_coincidencia` directamente, sin revisión. Corregido.
+Documento completo con el detalle y el razonamiento: `INFORME-SESION-2026-08-04.md` (resumen ejecutivo + técnico + decisiones pendientes) y `REVISION-CRITICA-AUDITORIA-2026-08-04.md` (revisión punto por punto de una auditoría anterior, con acuerdos y desacuerdos fundamentados).
 
-**Riesgo de calidad conocido, sin solución de código todavía**: Gemini casi nunca reporta `confianzaExtraccion` por debajo de 1 (a diferencia de Claude), lo que debilita la red de seguridad de "marcar filas dudosas para revisión visual". También hubo al menos una alucinación puntual de nombre (letras duplicadas) en una fila real de padrón, ya corregida a mano en la base. Si aparecen más casos así, considerar si vale la pena un modelo más caro solo para esta tarea puntual (ya se probó `gemini-flash-latest` con razonamiento activado — mismo resultado, 3x más lento, no vale la pena).
+1. **Motor de Resolución de Identidad** (`lib/identidad/`, ver su `README.md`): reemplazó por completo a Gemini en la comparación de nombres de persona (detección de duplicados en `lib/ia/deteccion-duplicados.ts`, matching de padrón en `lib/ia/matching-padron.ts`). Determinístico, benchmarkeado (`lib/identidad/BENCHMARK-RESULTADOS.md`, corpus sintético de 365 casos), con tests de regresión (`tests/unit/identidad/`, 36 tests, correr con `npx vitest run`). `umbral_confianza_duplicados` recalibrado de 0.7 a 0.65 (escala nueva, no comparable con la anterior) — ya actualizado en la base real, no solo en el seed.
+2. **Fase 11 (Notificaciones)** y **Fase 12 (Auditoría global, Exportaciones, Configuración avanzada)** construidas completas — rutas `/notificaciones`, `/perfil`, `/auditoria`, `/exportar`, `/configuracion`.
+3. Chatbot ahora muestra un desplegable "Ver de dónde salió esto" con las herramientas/consultas reales usadas (dato que ya se guardaba desde Fase 9 y nunca se leía).
+4. Dashboard admin: tarjetas de "salud de datos" nuevas (personas sin contacto, entradas de padrón pendientes, importaciones sin terminar).
+5. Log estructurado de uso de IA en `lib/ia/cliente-ia.ts` (grepeable en `vercel logs`, formato `[ia-uso]`).
+6. Primera suite de tests automatizados del proyecto (`vitest`, ver `vitest.config.mts`).
 
-## Fase 8 — IA: duplicados y normalización → **completa**
+## Pendientes reales, documentados explícitamente en el código funcional (no asumir que están hechos)
 
-- Detección de duplicados (`buscarPersonaCoincidente`) ya conectada al alta manual desde `/personas/nueva` (`app/(app)/personas/actions.ts`): si hay candidato(s), se muestra la sugerencia antes de crear, con opciones "Es la misma persona" (→ fusión) / "Ninguna es la misma" (crea igual, registra el descarte en `HistorialCambio`).
-- Flujo de fusión de duplicados completo: `fusionarPersonas()` en `lib/servicios/personas.service.ts` (aplica RN-2, incluyendo el manejo de colisiones cuando la definitiva y la descartada tienen `Participacion`/`PunteoPersona` para la misma Actividad/usuario — mismo criterio que RN-4). UI de comparación campo a campo en `app/(app)/personas/fusionar/[definitivaId]/[descartadaId]/`, accesible desde la sugerencia automática y también manualmente desde cualquier ficha (`BuscarDuplicadoFusion` en la pestaña "Datos generales").
-- Pendiente, no bloqueante: el proceso periódico de fondo sobre toda la base (mencionado en el roadmap) no existe todavía — no hay infraestructura de cron en el proyecto.
+- **Etiquetado de Personas**: el catálogo `Etiqueta` y su gestión centralizada (crear/editar/desactivar/fusionar) ya están en `/configuracion`, pero **no existe ninguna UI para asignar una etiqueta desde la ficha o el listado de una Persona** — ver nota en `05-modulo-personas.md` sección 7.
+- **Lista de espera de Actividades**: ni el indicador visual de "excedente de cupo" ni la notificación de "se liberó un cupo" están construidos — ver nota en `07-modulo-participaciones.md` sección 3.3. No es un gap de modelo de datos (el diseño ya evita a propósito un estado nuevo en `EstadoParticipacion`), es un gap de UI/lógica.
+- **Excel real (.xlsx)** en exportaciones: hoy `/exportar` solo genera CSV (decisión documentada, no un olvido — ver `lib/utils/csv-export.ts`).
+- **Resend (resumen de notificaciones por email)**: código completo pero inactivo — falta que Gaspar cree una cuenta en resend.com y cargue `RESEND_API_KEY` en Vercel. Sin eso, el cron diario (`app/api/cron/notificaciones-periodicas/`) corre igual pero el paso de email es un no-op silencioso.
+- **Verificación del plan de backups de Supabase**: pendiente, necesita acceso al panel de Supabase (no verificable desde la CLI de la base). Pedido explícito a Gaspar en el informe de cierre.
 
-## Fase 10 — Buscador global → construida
+## Decisiones pendientes de Gaspar (ver `INFORME-SESION-2026-08-04.md` para el detalle completo)
 
-`Ctrl/Cmd+K` desde cualquier pantalla (`components/buscador/BuscadorGlobal.tsx`). Búsqueda difusa con `pg_trgm`/`unaccent` sobre Persona, Actividad y PadronEntrada (`lib/servicios/busqueda.service.ts`), migración de extensiones/índices GIN aplicada a mano (`prisma/migrations/20260802190000_buscador_trgm_unaccent/`, ver nota técnica de Prisma CLI abajo). El punteo queda deliberadamente fuera del índice.
+1. ¿Construir etiquetado de Personas y/o lista de espera ahora, o quedan documentadas como pendientes por más tiempo?
+2. ¿Activar el resumen de notificaciones por email (crear cuenta Resend)?
+3. Verificar plan de backups de Supabase.
 
-## Historial de Persona → construido
+Si Gaspar no dio indicación sobre estas 3, preguntarle antes de asumir una — son decisiones de producto/alcance, no técnicas.
 
-La pestaña "Historial" de la ficha de Persona ya muestra una línea de tiempo real (`components/personas/HistorialPersona.tsx`) en vez del texto fijo que había antes. Nota: cada campo modificado en un guardado genera su propia fila de `HistorialCambio` (no un evento agrupado por operación, como describe `17-auditoria-historial.md` sección 8) — se muestran tal cual, sin reagrupar.
+## Cómo trabajar (pedido directo de Gaspar, sigue vigente)
 
-## Fase 9 — Chatbot e insights de IA → **bloqueada, a propósito**
+Autonomía real: probar, medir y desplegar por cuenta propia (Vercel CLI ya autenticada y linkeada a `crm-atp/crm-atp`, conexión a la base real vía scripts en `scripts/`), sin pedir clicks manuales — reservar las preguntas para decisiones de producto/alcance no resueltas en la documentación, con opciones concretas y una recomendación.
 
-El roadmap la bloquea explícitamente hasta que el checklist legal del módulo de Punteo (sección 10 de `08-modulo-punteo-electoral.md`) se revise con ATP — riesgo de fuga de datos si se construye antes. Es un paso humano, no de código. El módulo de Punteo en sí (Fase 5) ya está construido (`lib/servicios/punteo.service.ts`, con el modelo de privacidad de dos capas y auditoría de acceso ajeno), solo falta esa revisión legal para considerar la fase cerrada.
+**Antes de cualquier escritura masiva contra la base real, o antes de un `git push` a `main`** (dispara deploy automático a producción), el modo automático puede bloquear y pedir confirmación — normal, no un error. Push a producción está confirmado como aceptable para trabajo verificado (build+lint+test completos) — no es necesario re-preguntar cada vez, salvo cambios que toquen lógica de negocio crítica (matching, permisos, punteo) donde vale la pena avisar igual.
 
-## Cómo trabajar de ahora en más (pedido directo de Gaspar)
-
-Autonomía real: probar, medir y desplegar por cuenta propia (Vercel CLI, conexión a la base real), sin pedir clicks manuales — reservar las preguntas para decisiones de producto/alcance no resueltas en la documentación, con opciones concretas y una recomendación. Beep (`[console]::beep(800,250)` en loop) solo cuando de verdad está bloqueado esperando una decisión suya, no para avisos rutinarios.
-
-**Antes de cualquier escritura masiva contra la base de producción real**, el modo automático bloquea y pide confirmación — normal, no un error.
-
-**Verificar antes de asumir** (la lección más cara de hoy): límites de duración de función, nombres de modelos de IA vigentes, límites de rate — buscarlos en la fuente real (WebFetch a documentación oficial, o una llamada real a la API) antes de configurar código en base a un número "que suena razonable". Ver memoria `feedback-verificar-antes-de-asumir`.
+**Verificar antes de asumir** (lección repetida varias veces en este proyecto — límites de duración de función, nombres de modelos de IA vigentes, límites de rate, algoritmos de similitud): buscar en la fuente real (WebFetch a documentación oficial, benchmark propio, o una llamada real a la API) antes de configurar código en base a un número "que suena razonable". Ver memoria `feedback-verificar-antes-de-asumir`. El motor de identidad de esta sesión es el ejemplo más reciente: se armó un benchmark real en vez de elegir pesos a mano, y encontró 2 errores de diseño reales antes de integrarlos.
 
 ## Notas técnicas recurrentes
 
-- **Prisma CLI cuelga con `DIRECT_URL`** (`migrate dev`/`migrate status`/`migrate deploy`, puerto 5432). Camino alternativo probado varias veces: crear la carpeta de migración a mano (`prisma/migrations/<timestamp-UTC>_<nombre>/migration.sql`), aplicar con un script temporal que usa `prisma.$executeRawUnsafe()` **statement por statement, listados explícitos en un array (NO parsear el archivo .sql por `.split(";")`, rompe con statements que tienen comentarios `--` antes)**, más un `INSERT` manual en `_prisma_migrations` (checksum = SHA-256 del contenido del archivo), después `npx prisma generate`. Borrar el script temporal al terminar.
-- **Scripts de prueba/debug**: en `scripts/`, correr con `node -r dotenv/config node_modules/tsx/dist/cli.mjs scripts/archivo.ts dotenv_config_path=.env.local`, y **borrar después** de usarlos.
-- CLI de Vercel autenticada y linkeada (`crm-atp/crm-atp`). `npx vercel logs crm-atp.vercel.app` para errores reales — pero el comando **no hace streaming en vivo real**, devuelve un snapshot reciente cada vez que se lo llama (hay que volver a invocarlo, no confiar en que un solo Monitor lo va a seguir capturando eventos nuevos indefinidamente).
-- `GEMINI_API_KEY` ya cargada en `.env.local` y en Vercel (production/preview/development).
-
-## Qué hacer al retomar, en orden
-
-1. Confirmar el estado real del padrón en curso (`lotesProcesados`/`lotesTotales` del padrón "CD FONO 2026" con el PDF de Medicina) antes de asumir nada — seguir la carga incremental hasta que Gaspar la termine.
-2. Una vez completa la lectura, dejarlo revisar el matching en `/padron/[id]` antes de activar.
-3. Si aparecen más vínculos automáticos raros o más entradas "pendiente" sin sentido, diagnosticar con datos reales antes de parchear (ya se corrigieron dos bugs de este tipo hoy).
-4. Fases con trabajo pendiente real: Fase 11 (Notificaciones) y Fase 12 (Auditoría global/exportaciones/configuración avanzada) no están construidas todavía — candidatas naturales para seguir si no hay nada más urgente.
+- **Prisma CLI cuelga con `DIRECT_URL`** (`migrate dev`/`migrate status`/`migrate deploy`) y falla con "prepared statement already exists" contra el pooler (`DATABASE_URL`, puerto 6543). Camino alternativo probado varias veces: crear la carpeta de migración a mano (`prisma/migrations/<timestamp-UTC>_<nombre>/migration.sql`), aplicar con un script temporal que usa `prisma.$executeRawUnsafe()` statement por statement (array explícito, no parsear el .sql por `.split(";")`), más un `INSERT` manual en `_prisma_migrations` (checksum = SHA-256 del contenido del archivo), después `npx prisma generate`. Borrar el script temporal al terminar.
+- **Scripts de prueba/debug**: en `scripts/`, correr con `node -r dotenv/config node_modules/tsx/dist/cli.mjs scripts/archivo.ts dotenv_config_path=.env.local`, y **borrar después** de usarlos (excepción: `scripts/benchmark-identidad.ts` es permanente, se corre a mano cada vez que se toca `lib/identidad/algoritmos.ts` o `motor-scoring.ts`).
+- CLI de Vercel autenticada. `npx vercel logs crm-atp.vercel.app` para errores reales (no hace streaming en vivo real, hay que reinvocarlo). `npx vercel ls crm-atp` para ver el estado de los últimos deploys.
+- `GEMINI_API_KEY` cargada en `.env.local` y Vercel. Modelo vigente: `gemini-3.1-flash-lite` (ver `lib/ia/cliente-ia.ts` — no asumir el nombre sin verificar, el catálogo de Google cambia rápido).
+- Tests: `npx vitest run`. Build completo antes de cualquier push: `npm run build` (corre typecheck real de Next.js, más estricto que `tsc --noEmit` solo).

@@ -90,6 +90,7 @@ export async function generarRespuestaChatbot(
               : undefined,
         },
       }),
+      "chatbot",
     );
 
     const llamadas = respuesta.functionCalls;

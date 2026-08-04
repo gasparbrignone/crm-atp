@@ -49,7 +49,16 @@ export async function obtenerConversacion(conversacionId: string, usuarioId: str
     include: { mensajes: { orderBy: { fechaCreacion: "asc" } } },
   });
   if (conversacion.usuarioId !== usuarioId) throw new ConversacionAjenaError();
-  return conversacion;
+
+  return {
+    ...conversacion,
+    mensajes: conversacion.mensajes.map((m) => ({
+      ...m,
+      consultasEjecutadas: m.consultasEjecutadas
+        ? (JSON.parse(m.consultasEjecutadas) as { herramienta: string; args: Record<string, unknown>; resultado: unknown }[])
+        : [],
+    })),
+  };
 }
 
 // Título automático: primeras palabras del primer mensaje, para que la lista
@@ -62,6 +71,12 @@ function tituloDesdeTexto(texto: string): string {
 export interface ResultadoEnvioMensaje {
   conversacionId: string;
   respuesta: string;
+  // Herramientas invocadas y su resultado crudo — ya se persistía en
+  // ChatbotMensaje.consultasEjecutadas desde la Fase 9, pero nunca se volvía
+  // a leer del lado del cliente (hallazgo de
+  // /REVISION-CRITICA-AUDITORIA-2026-08-04.md punto 3): la data para
+  // justificar una respuesta ya existía, solo faltaba exponerla.
+  consultasEjecutadas: { herramienta: string; args: Record<string, unknown>; resultado: unknown }[];
 }
 
 export async function enviarMensajeChatbot(
@@ -133,5 +148,9 @@ export async function enviarMensajeChatbot(
     },
   });
 
-  return { conversacionId: conversacion.id, respuesta: respuestaTexto };
+  return {
+    conversacionId: conversacion.id,
+    respuesta: respuestaTexto,
+    consultasEjecutadas: resultado?.consultasEjecutadas ?? [],
+  };
 }

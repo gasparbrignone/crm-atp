@@ -10,6 +10,7 @@ import {
   obtenerRankingActividadesPorAsistencia,
   obtenerAgregadosPunteoAdmin,
   obtenerPanelOperativo,
+  obtenerSaludDatos,
   obtenerDashboardPersonal,
   type RangoFecha,
 } from "@/lib/servicios/dashboard.service";
@@ -124,6 +125,7 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
     ranking,
     agregadosPunteo,
     panelOperativo,
+    saludDatos,
   ] = await Promise.all([
     prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
     prisma.tipoActividad.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
@@ -134,6 +136,7 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
     obtenerRankingActividadesPorAsistencia(filtros),
     obtenerAgregadosPunteoAdmin(puedeVerRankingMilitantes),
     obtenerPanelOperativo(),
+    obtenerSaludDatos(),
   ]);
 
   const insights = await obtenerInsightsDashboardCacheados({
@@ -382,6 +385,37 @@ async function DashboardAdministrativo({ sp }: { sp: Record<string, string | und
               </ul>
             )}
           </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="mb-3 text-sm font-semibold text-texto">Salud de datos</h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <Link
+            href="/personas"
+            className="rounded-borde-chico border border-borde p-3 transition-colors hover:bg-fondo-hover"
+          >
+            <p className="text-2xl font-semibold text-texto tabular-nums">{saludDatos.personasSinContacto}</p>
+            <p className="text-xs text-texto-secundario">Personas activas sin teléfono ni email</p>
+          </Link>
+          <Link
+            href="/padron"
+            className="rounded-borde-chico border border-borde p-3 transition-colors hover:bg-fondo-hover"
+          >
+            <p className="text-2xl font-semibold text-texto tabular-nums">
+              {saludDatos.entradasPadronPendientes}
+            </p>
+            <p className="text-xs text-texto-secundario">Entradas de padrón pendientes de revisión</p>
+          </Link>
+          <Link
+            href="/importar"
+            className="rounded-borde-chico border border-borde p-3 transition-colors hover:bg-fondo-hover"
+          >
+            <p className="text-2xl font-semibold text-texto tabular-nums">
+              {saludDatos.importacionesSinTerminar}
+            </p>
+            <p className="text-xs text-texto-secundario">Importaciones sin terminar</p>
+          </Link>
         </div>
       </Card>
     </div>

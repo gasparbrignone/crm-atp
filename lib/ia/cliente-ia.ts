@@ -110,20 +110,44 @@ function esCuotaDiariaAgotada(error: unknown): boolean {
   return error instanceof ApiError && error.status === 429 && /PerDay/i.test(error.message);
 }
 
+// Log estructurado de uso de IA — /REVISION-CRITICA-AUDITORIA-2026-08-04.md
+// punto 4: no se justifica un dashboard ni una tabla nueva todavía (no hay
+// evidencia de necesitarlo más allá de esto), pero el consumo de IA ya causó
+// dos incidentes reales (cuenta de Anthropic sin saldo, cuota diaria de
+// Gemini agotada) sin ninguna visibilidad de cuánto se estaba gastando
+// mientras pasaba. Una línea por llamada, formato fijo y grepeable en
+// Vercel Logs (`vercel logs`, filtrando por `[ia-uso]`), sin infraestructura
+// nueva.
+function logUsoIa(etiqueta: string, evento: "ok" | "error", duracionMs: number, detalle?: string) {
+  const linea = { etiqueta, evento, duracionMs: Math.round(duracionMs), modelo: MODELO_IA_LIVIANO, detalle };
+  if (evento === "error") console.error("[ia-uso]", JSON.stringify(linea));
+  else console.log("[ia-uso]", JSON.stringify(linea));
+}
+
 export async function generarConReintentos<T>(
   llamada: () => Promise<T>,
+  etiqueta = "sin-etiqueta",
   intentos = 3,
 ): Promise<T> {
+  const inicio = Date.now();
   let ultimoError: unknown;
   for (let intento = 0; intento < intentos; intento++) {
     await esperarCupo();
     try {
-      return await llamada();
+      const resultado = await llamada();
+      logUsoIa(etiqueta, "ok", Date.now() - inicio, intento > 0 ? `intento ${intento + 1}` : undefined);
+      return resultado;
     } catch (error) {
-      if (esCuotaDiariaAgotada(error)) throw new CuotaDiariaAgotadaError();
+      if (esCuotaDiariaAgotada(error)) {
+        logUsoIa(etiqueta, "error", Date.now() - inicio, "cuota_diaria_agotada");
+        throw new CuotaDiariaAgotadaError();
+      }
       ultimoError = error;
       const reintentable = error instanceof ApiError && (error.status === 429 || error.status >= 500);
-      if (!reintentable || intento === intentos - 1) throw error;
+      if (!reintentable || intento === intentos - 1) {
+        logUsoIa(etiqueta, "error", Date.now() - inicio, error instanceof Error ? error.message : "error desconocido");
+        throw error;
+      }
       const sugerido = segundosDeEsperaSugeridos(error);
       const espera = sugerido ? sugerido * 1000 + 500 : 1000 * 2 ** intento;
       await esperar(Math.min(espera, TOPE_ESPERA_REINTENTO_MS));

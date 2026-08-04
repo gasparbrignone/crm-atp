@@ -137,6 +137,7 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
           thinkingConfig: SIN_PENSAMIENTO,
         },
       }),
+      "lectura-padron-pdf",
     );
 
     // Cortada por longitud: NO tratar como "sin entradas" — eso es

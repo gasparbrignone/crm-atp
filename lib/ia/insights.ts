@@ -90,6 +90,7 @@ Respondé ÚNICAMENTE un array JSON con esta forma exacta, sin texto adicional:
         thinkingConfig: SIN_PENSAMIENTO,
       },
     }),
+    "insights-dashboard",
   );
 
   const texto = respuesta.text;

@@ -5,6 +5,7 @@ import {
   SIN_PENSAMIENTO,
   generarConReintentos,
 } from "@/lib/ia/cliente-ia";
+import { similitudJaroWinkler, coeficienteDice } from "@/lib/identidad/algoritmos";
 
 // Normalización de datos — /15-ia.md sección 3. Se aplica automáticamente al
 // guardar, no como paso separado que el usuario deba disparar. La mayoría de
@@ -104,6 +105,33 @@ export async function resolverCarreraSemantica(textoLibre: string): Promise<stri
   );
   if (contiene) return contiene.id;
 
+  // Escalón intermedio, determinístico, sin gastar cuota de IA — pedido de
+  // Gaspar (/REVISION-CRITICA-AUDITORIA-2026-08-04.md punto 1.3): dado que el
+  // catálogo es chico (S1 de /01-vision-alcance.md, 4-10 carreras), comparar
+  // contra todos los valores es barato, y la similitud de string (mismo
+  // motor que /lib/identidad/, reusado acá porque es exactamente el mismo
+  // problema de fondo — typos y variantes de escritura) resuelve la enorme
+  // mayoría de los casos reales ("Enfermeria" sin tilde, "medicna" con typo)
+  // sin necesidad de IA. Solo si ningún valor del catálogo supera un umbral
+  // alto de similitud se recurre al modelo, reservado para texto realmente
+  // libre (abreviaturas no obvias, nombres parciales sin relación textual
+  // directa con el nombre completo).
+  const UMBRAL_SIMILITUD_DETERMINISTICA = 0.88;
+  let mejorCandidata: { id: string; similitud: number } | null = null;
+  for (const c of carreras) {
+    const nombreNormalizado = normalizarParaComparar(c.nombre);
+    const similitud = Math.max(
+      similitudJaroWinkler(textoNormalizado, nombreNormalizado),
+      coeficienteDice(textoNormalizado, nombreNormalizado),
+    );
+    if (!mejorCandidata || similitud > mejorCandidata.similitud) {
+      mejorCandidata = { id: c.id, similitud };
+    }
+  }
+  if (mejorCandidata && mejorCandidata.similitud >= UMBRAL_SIMILITUD_DETERMINISTICA) {
+    return mejorCandidata.id;
+  }
+
   const prompt = `Tarea: decidir a qué carrera universitaria del catálogo corresponde un texto libre ingresado por un usuario (puede ser una abreviatura, un nombre parcial, o tener errores de tipeo).
 
 Texto ingresado: "${texto}"
@@ -125,6 +153,7 @@ Respondé ÚNICAMENTE un objeto JSON con esta forma exacta, sin texto adicional:
         thinkingConfig: SIN_PENSAMIENTO,
       },
     }),
+    "normalizacion-carrera",
   );
 
   const texto2 = respuesta.text;

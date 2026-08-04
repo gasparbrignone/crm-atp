@@ -301,6 +301,27 @@ export async function obtenerPanelOperativo() {
   return { actividadesProximas, importacionesConErrores };
 }
 
+// "Salud de datos" — /REVISION-CRITICA-AUDITORIA-2026-08-04.md punto 5: se
+// integra al dashboard admin ya existente en vez de un módulo nuevo
+// (evita fragmentar el único lugar donde un administrador ya va a buscar
+// "estado general del sistema" en dos pantallas separadas). Son counts
+// baratos, sin impacto de performance real al volumen esperado del sistema.
+export async function obtenerSaludDatos() {
+  const [personasSinContacto, entradasPadronPendientes, importacionesSinTerminar] = await Promise.all([
+    prisma.persona.count({
+      where: {
+        estadoFicha: "activa",
+        telefonos: { none: {} },
+        emails: { none: {} },
+      },
+    }),
+    prisma.padronEntrada.count({ where: { estadoMatching: "pendiente" } }),
+    prisma.importJob.count({ where: { estado: { in: ["pendiente", "procesando"] } } }),
+  ]);
+
+  return { personasSinContacto, entradasPadronPendientes, importacionesSinTerminar };
+}
+
 // Agregados de Punteo para el dashboard admin — /11-dashboards.md sección
 // 3.2. `incluirRankingMilitantes` se decide en la página según si quien mira
 // el dashboard tiene `punteo.ver_todos` (expone actividad de otros usuarios,

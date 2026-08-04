@@ -18,10 +18,17 @@ interface ConversacionResumen {
   cantidadMensajes: number;
 }
 
+interface ConsultaEjecutada {
+  herramienta: string;
+  args: Record<string, unknown>;
+  resultado: unknown;
+}
+
 interface MensajeLocal {
   id: string;
   rol: "usuario" | "asistente";
   contenido: string;
+  consultasEjecutadas?: ConsultaEjecutada[];
 }
 
 function formatearFecha(iso: string) {
@@ -54,7 +61,12 @@ export function ChatbotCliente({ conversaciones }: { conversaciones: Conversacio
       const conversacion = await obtenerConversacionAction(id);
       setConversacionId(conversacion.id);
       setMensajes(
-        conversacion.mensajes.map((m) => ({ id: m.id, rol: m.rol, contenido: m.contenido })),
+        conversacion.mensajes.map((m) => ({
+          id: m.id,
+          rol: m.rol,
+          contenido: m.contenido,
+          consultasEjecutadas: m.consultasEjecutadas,
+        })),
       );
     });
   }
@@ -72,7 +84,12 @@ export function ChatbotCliente({ conversaciones }: { conversaciones: Conversacio
         const resultado = await enviarMensajeChatbotAction(conversacionId, mensaje);
         setMensajes((actual) => [
           ...actual,
-          { id: `${idTemporal}-resp`, rol: "asistente", contenido: resultado.respuesta },
+          {
+            id: `${idTemporal}-resp`,
+            rol: "asistente",
+            contenido: resultado.respuesta,
+            consultasEjecutadas: resultado.consultasEjecutadas,
+          },
         ]);
         if (!conversacionId) {
           setConversacionId(resultado.conversacionId);
@@ -140,14 +157,19 @@ export function ChatbotCliente({ conversaciones }: { conversaciones: Conversacio
               {mensajes.map((m) => (
                 <div
                   key={m.id}
-                  className={cn(
-                    "max-w-[80%] whitespace-pre-wrap rounded-borde-chico px-3 py-2 text-sm",
-                    m.rol === "usuario"
-                      ? "ml-auto bg-primario text-white"
-                      : "mr-auto bg-fondo-hover text-texto",
-                  )}
+                  className={cn("max-w-[80%]", m.rol === "usuario" ? "ml-auto" : "mr-auto")}
                 >
-                  {m.contenido}
+                  <div
+                    className={cn(
+                      "whitespace-pre-wrap rounded-borde-chico px-3 py-2 text-sm",
+                      m.rol === "usuario" ? "bg-primario text-white" : "bg-fondo-hover text-texto",
+                    )}
+                  >
+                    {m.contenido}
+                  </div>
+                  {m.rol === "asistente" && m.consultasEjecutadas && m.consultasEjecutadas.length > 0 && (
+                    <JustificacionRespuesta consultas={m.consultasEjecutadas} />
+                  )}
                 </div>
               ))}
               {enviando && (
@@ -189,4 +211,45 @@ export function ChatbotCliente({ conversaciones }: { conversaciones: Conversacio
       </Card>
     </div>
   );
+}
+
+// Justificación de la respuesta — /REVISION-CRITICA-AUDITORIA-2026-08-04.md
+// punto 3: muestra las herramientas/consultas REALES que se ejecutaron
+// contra la base para llegar a esta respuesta, no una explicación generada
+// por la propia IA (eso solo trasladaría el problema de verificabilidad un
+// paso, ver punto 2 del mismo documento — "la IA nunca es la fuente de
+// verdad"). Es el dato crudo que ya se guardaba en
+// ChatbotMensaje.consultasEjecutadas desde la Fase 9 y nunca se leía.
+function JustificacionRespuesta({ consultas }: { consultas: ConsultaEjecutada[] }) {
+  return (
+    <details className="mt-1 rounded-borde-chico border border-borde bg-fondo-superficie px-2.5 py-1.5 text-xs text-texto-secundario">
+      <summary className="cursor-pointer select-none font-medium">
+        Ver de dónde salió esto ({consultas.length} consulta{consultas.length === 1 ? "" : "s"})
+      </summary>
+      <div className="mt-2 flex flex-col gap-2">
+        {consultas.map((c, i) => (
+          <div key={i} className="rounded border border-borde/70 bg-fondo p-2">
+            <p className="font-mono font-semibold text-texto">{c.herramienta}</p>
+            {Object.keys(c.args).length > 0 && (
+              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words text-[11px]">
+                {JSON.stringify(c.args, null, 2)}
+              </pre>
+            )}
+            <p className="mt-1 text-[11px] text-texto-secundario">
+              → {resumirResultado(c.resultado)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function resumirResultado(resultado: unknown): string {
+  if (Array.isArray(resultado)) return `${resultado.length} resultado(s)`;
+  if (resultado && typeof resultado === "object" && "error" in resultado) {
+    return String((resultado as { error: unknown }).error);
+  }
+  const texto = JSON.stringify(resultado);
+  return texto && texto.length > 200 ? `${texto.slice(0, 200)}…` : (texto ?? "sin datos");
 }

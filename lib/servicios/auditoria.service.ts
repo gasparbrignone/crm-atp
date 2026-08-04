@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma/client";
-import type { AccionHistorial } from "@prisma/client";
+import type { AccionHistorial, Prisma } from "@prisma/client";
 
 interface RegistrarCambioInput {
   entidad: string;
@@ -65,4 +65,106 @@ export async function obtenerHistorialDeEntidad(entidad: string, entidadId: stri
     usuarioNombre: e.usuario ? `${e.usuario.nombre} ${e.usuario.apellido}` : null,
     metadata: e.metadata ? (JSON.parse(e.metadata) as Record<string, unknown>) : null,
   }));
+}
+
+// Entidades sensibles del módulo de Punteo — se excluyen de la vista de
+// auditoría global salvo que quien consulta tenga además `punteo.ver_todos`
+// (RN-5, /17-auditoria-historial.md sección 8 y 11: "la auditoría nunca es
+// una vía alternativa para eludir los permisos definidos"). En la práctica
+// el contenido de un comentario nunca se guarda en HistorialCambio (ver
+// registrarComentarioPunteo en punteo.service.ts, solo metadata con ids), así
+// que esto protege sobre todo el patrón de acceso en sí — quién miró el
+// punteo de quién — que es justamente el dato que /08-modulo-punteo-electoral.md
+// sección 8 pide auditar como excepción, no exponer sin más.
+const ENTIDADES_PUNTEO = ["PunteoPersona", "PunteoComentario"];
+
+export interface FiltrosAuditoriaGlobal {
+  usuarioId?: string;
+  entidad?: string;
+  accion?: AccionHistorial;
+  desde?: Date;
+  hasta?: Date;
+  entidadIdBusqueda?: string;
+}
+
+const PAGE_SIZE_AUDITORIA = 50;
+
+// Vista de auditoría global (Administrador) — /17-auditoria-historial.md
+// sección 7: filtro por usuario, tipo de entidad, tipo de acción, rango de
+// fechas, y búsqueda por entidad puntual (pegar/buscar un id).
+export async function listarAuditoriaGlobal(
+  filtros: FiltrosAuditoriaGlobal,
+  pagina: number,
+  puedeVerPunteo: boolean,
+) {
+  const where: Prisma.HistorialCambioWhereInput = {
+    ...(filtros.usuarioId ? { usuarioId: filtros.usuarioId } : {}),
+    ...(filtros.entidad ? { entidad: filtros.entidad } : {}),
+    ...(filtros.accion ? { accion: filtros.accion } : {}),
+    ...(filtros.entidadIdBusqueda ? { entidadId: filtros.entidadIdBusqueda } : {}),
+    ...(filtros.desde || filtros.hasta
+      ? { fecha: { ...(filtros.desde ? { gte: filtros.desde } : {}), ...(filtros.hasta ? { lte: filtros.hasta } : {}) } }
+      : {}),
+    ...(!puedeVerPunteo ? { entidad: { notIn: ENTIDADES_PUNTEO } } : {}),
+  };
+
+  const [total, eventos] = await Promise.all([
+    prisma.historialCambio.count({ where }),
+    prisma.historialCambio.findMany({
+      where,
+      include: { usuario: { select: { nombre: true, apellido: true, email: true } } },
+      orderBy: { fecha: "desc" },
+      skip: (pagina - 1) * PAGE_SIZE_AUDITORIA,
+      take: PAGE_SIZE_AUDITORIA,
+    }),
+  ]);
+
+  return {
+    eventos,
+    total,
+    pagina,
+    paginas: Math.max(1, Math.ceil(total / PAGE_SIZE_AUDITORIA)),
+  };
+}
+
+// Lista de valores distintos de `entidad` ya registrados — alimenta el
+// selector de filtro sin hardcodear la lista de entidades auditables.
+export async function listarEntidadesAuditadas(puedeVerPunteo: boolean): Promise<string[]> {
+  const filas = await prisma.historialCambio.findMany({
+    distinct: ["entidad"],
+    select: { entidad: true },
+    orderBy: { entidad: "asc" },
+  });
+  const entidades = filas.map((f) => f.entidad);
+  return puedeVerPunteo ? entidades : entidades.filter((e) => !ENTIDADES_PUNTEO.includes(e));
+}
+
+// Exportación a CSV de la auditoría global filtrada —
+// /17-auditoria-historial.md sección 7: "exportable a CSV para revisión
+// externa". Reusa el mismo `where` que la vista paginada, sin el límite de
+// página (tope duro para no generar un CSV descontrolado en un sistema sin
+// paginación de exportación todavía).
+const TOPE_FILAS_EXPORT_AUDITORIA = 10_000;
+
+export async function obtenerFilasAuditoriaParaExportar(
+  filtros: FiltrosAuditoriaGlobal,
+  puedeVerPunteo: boolean,
+) {
+  const where: Prisma.HistorialCambioWhereInput = {
+    ...(filtros.usuarioId ? { usuarioId: filtros.usuarioId } : {}),
+    ...(filtros.entidad ? { entidad: filtros.entidad } : {}),
+    ...(filtros.accion ? { accion: filtros.accion } : {}),
+    ...(filtros.entidadIdBusqueda ? { entidadId: filtros.entidadIdBusqueda } : {}),
+    ...(filtros.desde || filtros.hasta
+      ? { fecha: { ...(filtros.desde ? { gte: filtros.desde } : {}), ...(filtros.hasta ? { lte: filtros.hasta } : {}) } }
+      : {}),
+    ...(!puedeVerPunteo ? { entidad: { notIn: ENTIDADES_PUNTEO } } : {}),
+  };
+
+  return prisma.historialCambio.findMany({
+    where,
+    include: { usuario: { select: { nombre: true, apellido: true, email: true } } },
+    orderBy: { fecha: "desc" },
+    take: TOPE_FILAS_EXPORT_AUDITORIA,
+  });
 }

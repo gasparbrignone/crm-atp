@@ -9,6 +9,9 @@ import {
   MdHowToVote,
   MdFactCheck,
   MdChatBubbleOutline,
+  MdSettings,
+  MdHistory,
+  MdFileDownload,
 } from "react-icons/md";
 import Link from "next/link";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -66,10 +69,28 @@ const ENLACES_NAV: (EnlaceNav & { permiso: string })[] = [
     permiso: "ia.usar_chatbot",
   },
   {
+    href: "/exportar",
+    etiqueta: "Exportar",
+    icono: <MdFileDownload size={18} />,
+    permiso: "exportaciones.ejecutar",
+  },
+  {
     href: "/usuarios",
     etiqueta: "Usuarios",
     icono: <MdAdminPanelSettings size={18} />,
     permiso: "usuarios.ver",
+  },
+  {
+    href: "/auditoria",
+    etiqueta: "Auditoría",
+    icono: <MdHistory size={18} />,
+    permiso: "auditoria.ver",
+  },
+  {
+    href: "/configuracion",
+    etiqueta: "Configuración",
+    icono: <MdSettings size={18} />,
+    permiso: "configuracion.gestionar",
   },
 ];
 

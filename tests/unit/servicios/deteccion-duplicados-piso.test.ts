@@ -40,7 +40,7 @@ describe("buscarPersonaCoincidente — piso de confianza (P4)", () => {
 
   it("candidato con confianza por debajo del piso (0.4) → 'sin_candidatos', no 'ambiguo'", async () => {
     // "Juan Perez" vs "Maria Rodriguez": ningún token en común, confianza ~0.
-    queryRawMock.mockResolvedValue([{ id: "candidato-lejano" }]);
+    queryRawMock.mockResolvedValue([{ personaId: "candidato-lejano" }]);
     personaFindManyMock.mockResolvedValue([
       { id: "candidato-lejano", nombre: "Maria", apellido: "Rodriguez", telefonos: [], emails: [] },
     ]);
@@ -58,7 +58,7 @@ describe("buscarPersonaCoincidente — piso de confianza (P4)", () => {
     // 0.6, que cae en la banda de revisión para un umbral de 0.65 — mismo
     // caso que el bug histórico de Cejas, nunca debe auto-vincular ni
     // descartarse silencioso.
-    queryRawMock.mockResolvedValue([{ id: "candidato-mismo-apellido" }]);
+    queryRawMock.mockResolvedValue([{ personaId: "candidato-mismo-apellido" }]);
     personaFindManyMock.mockResolvedValue([
       { id: "candidato-mismo-apellido", nombre: "Damaris", apellido: "Cejas", telefonos: [], emails: [] },
     ]);
@@ -72,7 +72,7 @@ describe("buscarPersonaCoincidente — piso de confianza (P4)", () => {
   });
 
   it("candidato con confianza igual o por encima del umbral → 'coincidencia'", async () => {
-    queryRawMock.mockResolvedValue([{ id: "candidato-igual" }]);
+    queryRawMock.mockResolvedValue([{ personaId: "candidato-igual" }]);
     personaFindManyMock.mockResolvedValue([
       { id: "candidato-igual", nombre: "Juan", apellido: "Perez", telefonos: [], emails: [] },
     ]);

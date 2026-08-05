@@ -117,6 +117,20 @@ function separarTokens(texto: string): string[] {
     .filter((t) => t.length > 0);
 }
 
+// Tokeniza un campo YA estructurado (ej. Persona.nombre o Persona.apellido,
+// que vienen separados desde el formulario/base — no texto libre ambiguo),
+// aplicando el catálogo léxico configurable pero SIN la heurística
+// posicional de tokenizarNombrePersona (que es para cuando no se sabe qué
+// parte del texto es nombre y cuál apellido — acá ya se sabe, por eso no
+// hace falta adivinar). Usado por
+// lib/servicios/persona-token.service.ts para poblar el índice invertido.
+export function tokenizarCampoEstructurado(
+  texto: string,
+  catalogo: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
+): string[] {
+  return aplicarCatalogoLexico(separarTokens(texto), catalogo);
+}
+
 // El padrón universitario (ver /09-modulo-padron-electoral.md) trae el
 // nombre como "Apellido, Nombre" — si el texto original tiene una coma, esa
 // posición es una señal fuerte y confiable de dónde termina el apellido.

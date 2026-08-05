@@ -26,6 +26,12 @@ Texto libre (nombre completo, cualquier fuente/formato)
 └─────────┬─────────────┘
           ▼
 ┌─────────────────────┐
+│ 2.5. poda.ts          │  Descarta, ANTES del scoring, candidatos sin
+│      (desde 2026-08-05)│  ningún token compartido ni similitud real de
+│                       │  apellido — deliberadamente permisiva
+└─────────┬─────────────┘
+          ▼
+┌─────────────────────┐
 │ 3. motor-scoring.ts  │  Combina señales en una confianza 0-1 explicable
 │                       │  (no un promedio simple — ver más abajo), con 2
 │                       │  compuertas determinísticas de seguridad
@@ -34,11 +40,12 @@ Texto libre (nombre completo, cualquier fuente/formato)
 ┌─────────────────────┐
 │  4. resolucion.ts    │  Punto de entrada: evalúa un nombre contra una
 │                       │  lista de candidatos (ya acotada por blocking en
-│                       │  el módulo llamador), devuelve el mejor ordenado
+│                       │  el módulo llamador + la poda de arriba), devuelve
+│                       │  el mejor ordenado
 └──────────────────────┘
 ```
 
-Cada capa es independiente y testeable por separado. Ningún archivo de este módulo llama a `lib/ia/cliente-ia.ts` ni a ningún proveedor de IA.
+Cada capa es independiente y testeable por separado. Ningún archivo de este módulo llama a `lib/ia/cliente-ia.ts` ni a ningún proveedor de IA. El blocking en sí (qué candidatos llegan a `evaluarCandidatos()`) vive un nivel más arriba, en los módulos llamadores — ver "Escalabilidad" más abajo.
 
 ## El motor de scoring, en detalle
 
@@ -79,9 +86,14 @@ Ver el encabezado de `algoritmos.ts` para el detalle completo. Resumen:
 
 ## Escalabilidad
 
-Este módulo asume que la lista de `candidatos` que recibe `evaluarCandidatos()` ya viene acotada por un paso de *blocking* hecho en SQL por el módulo llamador (ej. mismo prefijo de apellido — ver `obtenerCandidatosPorApellido` en `deteccion-duplicados.ts` y `obtenerCandidatosPorNombre` en `matching-padron.ts`, ambas ya limitaban a ~20 candidatos desde antes de este rediseño, por el mismo motivo). Comparar contra decenas de candidatos ya acotados es del orden de 0.1ms por comparación (ver tabla de tiempos en `BENCHMARK-RESULTADOS.md`) — miles de comparaciones por segundo, sin depender de cuota ni de latencia de red de un proveedor externo.
+Este módulo asume que la lista de `candidatos` que recibe `evaluarCandidatos()` ya viene acotada por dos pasos previos, en este orden:
 
-Si el volumen de candidatos por bloque creciera mucho (no es lo esperado para el volumen de ATP, ver supuesto S4 de `/01-vision-alcance.md`), el blocking debería reforzarse con la extensión `pg_trgm` ya instalada en la base (Fase 10, buscador global) calculando similitud directamente en SQL antes de traer filas a Node, en vez de agrandar este módulo.
+1. **Blocking por índice invertido de tokens** (`PersonaToken`, ver `lib/servicios/persona-token.service.ts`) — reemplaza, desde 2026-08-05, el blocking anterior por similitud de trigramas sobre el campo `apellido` completo (`PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md`: ese enfoque se volvía indulgente con apellidos cortos que comparten sufijos comunes del español por pura morfología compartida, sin relación real). `obtenerCandidatosPorApellido` (`deteccion-duplicados.ts`) y `obtenerCandidatosPorNombre` (`matching-padron.ts`) consultan `PersonaToken` por coincidencia exacta de token más variantes de tipeo acotadas por distancia de edición absoluta, nunca similitud normalizada de campo completo.
+2. **Poda** (`lib/identidad/poda.ts`, capa 2.5) — descarta, antes del scoring, cualquier candidato sin ningún token compartido ni similitud real de apellido. Deliberadamente permisiva (prioriza recall).
+
+Comparar contra los candidatos ya acotados por estos dos pasos es del orden de 0.1ms por comparación (ver tabla de tiempos en `BENCHMARK-RESULTADOS.md`) — miles de comparaciones por segundo, sin depender de cuota ni de latencia de red de un proveedor externo.
+
+`PersonaToken` se mantiene sincronizado al crear/editar una Persona (`crearPersona`/`actualizarPersona` en `personas.service.ts`, vía `sincronizarTokensPersona`); las Personas que ya existían antes de esta tabla se poblaron con `scripts/backfill-persona-token.ts` (permanente, re-ejecutable si hiciera falta).
 
 ## Dónde entra la IA (y dónde no)
 

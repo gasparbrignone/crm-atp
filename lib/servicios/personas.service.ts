@@ -15,6 +15,7 @@ import {
 } from "@/lib/ia/deteccion-duplicados";
 import { registrarVeredictoIdentidad } from "@/lib/servicios/veredictos-identidad.service";
 import { obtenerCatalogoLexicoIdentidad } from "@/lib/servicios/lexico-identidad.service";
+import { sincronizarTokensPersona } from "@/lib/servicios/persona-token.service";
 import type { CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
 import type { PersonaFormValues } from "@/lib/validaciones/persona.validation";
 
@@ -122,6 +123,10 @@ export async function crearPersona(
   usuarioId: string,
   etiquetaIds: string[] = [],
   origen: OrigenDato = "alta_manual",
+  // Opcional — mismo motivo que en resolverOCrearPersona: un caller de N
+  // filas ya tiene el catálogo cargado una sola vez, no hace falta que
+  // sincronizarTokensPersona lo vuelva a consultar por cada Persona creada.
+  catalogoLexicoPrecalculado?: CatalogoLexicoIdentidad,
 ) {
   if (datos.dni) {
     const existente = await buscarPorDniActivoOArchivado(datos.dni);
@@ -166,6 +171,10 @@ export async function crearPersona(
           : undefined,
       },
     });
+    // Índice invertido para el blocking multi-estrategia del Motor de
+    // Resolución de Identidad (lib/identidad/) — dentro de la misma
+    // transacción, nunca deja una Persona sin sus tokens sincronizados.
+    await sincronizarTokensPersona(tx, creada.id, nombre, apellido, catalogoLexicoPrecalculado);
     return creada;
   });
 
@@ -245,7 +254,7 @@ export async function resolverOCrearPersona(
     return { tipo: "ambiguo", motivo: resultado.motivo, candidatos: resultado.candidatos };
   }
 
-  const persona = await crearPersona(datos, usuarioId, [], origen);
+  const persona = await crearPersona(datos, usuarioId, [], origen, catalogoLexico);
   return { tipo: "creada", personaId: persona.id };
 }
 
@@ -295,6 +304,13 @@ export async function actualizarPersona(
   if (Object.keys(cambios).length === 0) return actual;
 
   const actualizada = await prisma.persona.update({ where: { id }, data });
+
+  // Resincroniza el índice invertido solo si nombre o apellido cambiaron —
+  // son los únicos campos de los que depende PersonaToken (ver
+  // lib/servicios/persona-token.service.ts).
+  if ("nombre" in cambios || "apellido" in cambios) {
+    await sincronizarTokensPersona(prisma, id, actualizada.nombre, actualizada.apellido);
+  }
 
   for (const [campo, { anterior, nuevo }] of Object.entries(cambios)) {
     await registrarCambio({

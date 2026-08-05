@@ -218,10 +218,34 @@ model Persona {
   participaciones Participacion[]
   punteos         PunteoPersona[]
   padronEntradas  PadronEntrada[]
+  tokens          PersonaToken[]
 
   @@index([carreraId, anio, estadoPadronCD])
   @@index([carreraId, anio, estadoPadronCE])
   @@index([apellido, nombre])
+}
+
+// Índice invertido de tokens de nombre — PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+// sección 4: reemplaza el blocking anterior (similitud de trigramas sobre el
+// campo "apellido" completo, que se volvía indulgente con apellidos cortos
+// que comparten sufijos comunes del español — ver diagnóstico en ese
+// documento). Una fila por unidad léxica de nombre/apellido de cada Persona
+// (ya fusionada con el catálogo léxico de LexicoNombrePropio si aplica —
+// ver lib/identidad/normalizar.ts), poblada al crear/editar/fusionar una
+// Persona (lib/servicios/persona-token.service.ts), consultada por
+// coincidencia EXACTA (rápida, por índice) más variantes acotadas por
+// distancia de edición ABSOLUTA — nunca similitud normalizada de campo
+// completo, que es la causa raíz diagnosticada de los falsos positivos
+// reales del blocking anterior.
+model PersonaToken {
+  id         String  @id @default(uuid())
+  personaId  String
+  persona    Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  token      String
+  esApellido Boolean
+
+  @@index([token])
+  @@index([personaId])
 }
 
 // Origen de un dato de contacto — PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md

@@ -36,11 +36,19 @@ vi.mock("@/lib/servicios/lexico-identidad.service", () => ({
 
 const personaCreateMock = vi.fn();
 const personaFindFirstMock = vi.fn();
+const personaTokenDeleteManyMock = vi.fn();
+const personaTokenCreateManyMock = vi.fn();
 
 vi.mock("@/lib/prisma/client", () => ({
   prisma: {
     $transaction: async (fn: (tx: unknown) => unknown) =>
-      fn({ persona: { create: personaCreateMock } }),
+      fn({
+        persona: { create: personaCreateMock },
+        personaToken: {
+          deleteMany: personaTokenDeleteManyMock,
+          createMany: personaTokenCreateManyMock,
+        },
+      }),
     persona: { findFirst: personaFindFirstMock },
   },
 }));

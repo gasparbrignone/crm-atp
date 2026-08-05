@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/prisma/client";
 import { evaluarCandidatos } from "@/lib/identidad/resolucion";
 import { clasificarConfianza } from "@/lib/identidad/politica-decision";
-import { CATALOGO_LEXICO_VACIO, type CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
+import {
+  CATALOGO_LEXICO_VACIO,
+  tokenizarCampoEstructurado,
+  type CatalogoLexicoIdentidad,
+} from "@/lib/identidad/normalizar";
+import { buscarPersonaIdsPorTokens } from "@/lib/servicios/persona-token.service";
 
 // Matching de PadronEntrada contra Persona — /09-modulo-padron-electoral.md
 // sección 5: DNI exacto primero (señal determinística), después nombre
@@ -43,38 +48,28 @@ async function buscarPorDni(dni: string) {
 // compartían los nombres de pila "Ana"/"Paula"). El apellido sigue
 // buscándose contra ambos campos de la persona candidata, por si el orden
 // viniera invertido en algún caso.
-// Mismo umbral y mismo patrón de consulta (similarity + unaccent + lower
-// sobre el índice GIN pg_trgm ya instalado, ver busqueda.service.ts) que
-// deteccion-duplicados.ts — reemplaza el blocking anterior por tokens exactos
-// (`contains`), que perdía candidatos con errores de tipeo en el apellido y
-// no tenía tolerancia difusa real. Se sigue buscando el apellido contra
-// ambos campos (apellido Y nombre) de la persona candidata, por si el orden
-// viniera invertido — mismo criterio que antes, solo cambia el mecanismo de
-// comparación de "substring exacto" a "similitud de trigramas". Ver
-// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.5.
-const UMBRAL_SIMILITUD_BLOCKING = 0.3;
-
-async function obtenerCandidatosPorNombre(nombreCompleto: string): Promise<CandidatoPadron[]> {
+// Blocking multi-estrategia por índice invertido de tokens
+// (lib/servicios/persona-token.service.ts) — PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+// sección 4, reemplaza el blocking anterior por similitud de trigramas sobre
+// campos completos (mismo diagnóstico que deteccion-duplicados.ts: se
+// volvía indulgente con apellidos cortos por morfología compartida). Se
+// sigue buscando contra AMBOS roles (apellido y nombre indexados en
+// PersonaToken, `soloApellido=false`) por si el orden viniera invertido en
+// el padrón — mismo criterio que antes, ahora comparando tokens en vez de
+// campos completos.
+async function obtenerCandidatosPorNombre(
+  nombreCompleto: string,
+  catalogoLexico: CatalogoLexicoIdentidad,
+): Promise<CandidatoPadron[]> {
   const apellidoOriginal = (nombreCompleto.split(",")[0] ?? "").trim();
   if (apellidoOriginal.length < 2) return [];
 
-  const coincidencias = await prisma.$queryRaw<{ id: string }[]>`
-    SELECT id FROM "Persona"
-    WHERE "estadoFicha" != 'fusionada'
-      AND (
-        similarity(unaccent(lower(apellido)), unaccent(lower(${apellidoOriginal}))) > ${UMBRAL_SIMILITUD_BLOCKING}
-        OR similarity(unaccent(lower(nombre)), unaccent(lower(${apellidoOriginal}))) > ${UMBRAL_SIMILITUD_BLOCKING}
-      )
-    ORDER BY GREATEST(
-      similarity(unaccent(lower(apellido)), unaccent(lower(${apellidoOriginal}))),
-      similarity(unaccent(lower(nombre)), unaccent(lower(${apellidoOriginal})))
-    ) DESC
-    LIMIT 20
-  `;
-  if (coincidencias.length === 0) return [];
+  const tokens = tokenizarCampoEstructurado(apellidoOriginal, catalogoLexico);
+  const ids = await buscarPersonaIdsPorTokens(tokens, false);
+  if (ids.length === 0) return [];
 
   return prisma.persona.findMany({
-    where: { id: { in: coincidencias.map((c) => c.id) } },
+    where: { id: { in: ids }, estadoFicha: { not: "fusionada" } },
     select: { id: true, nombre: true, apellido: true, dni: true },
   });
 }
@@ -93,7 +88,7 @@ export async function buscarPersonaParaEntradaPadron(
     return { tipo: "vinculado_automatico", personaId: porDni.id, confianza: 1 };
   }
 
-  const candidatos = await obtenerCandidatosPorNombre(entrada.nombreCompletoOriginal);
+  const candidatos = await obtenerCandidatosPorNombre(entrada.nombreCompletoOriginal, catalogoLexico);
   if (candidatos.length === 0) return { tipo: "sin_coincidencia" };
 
   // Motor de Resolución de Identidad determinístico (ver

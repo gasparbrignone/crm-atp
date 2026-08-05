@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/prisma/client";
 import { evaluarCandidatos } from "@/lib/identidad/resolucion";
 import { clasificarConfianza } from "@/lib/identidad/politica-decision";
-import { CATALOGO_LEXICO_VACIO, type CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
+import {
+  CATALOGO_LEXICO_VACIO,
+  tokenizarCampoEstructurado,
+  type CatalogoLexicoIdentidad,
+} from "@/lib/identidad/normalizar";
+import { buscarPersonaIdsPorTokens } from "@/lib/servicios/persona-token.service";
 
 // Detección de duplicados — /15-ia.md sección 2. Señales por orden de
 // confianza (sección 2.2): DNI/legajo idéntico (determinístico) > teléfono
@@ -110,33 +115,27 @@ interface CandidatoParaComparar {
   emails: string[];
 }
 
-// Umbral de similitud del blocking (no confundir con `umbral_confianza_duplicados`,
-// que decide auto-vinculación sobre el resultado del motor de scoring — este
-// solo decide qué candidatos entran a compararse). Mismo valor y mismo patrón
-// de consulta (similarity + unaccent + lower) que ya usa busqueda.service.ts
-// sobre el índice GIN pg_trgm de la migración 20260802190000_buscador_trgm_unaccent,
-// instalado en producción desde la Fase 10 pero, hasta ahora, no reutilizado
-// acá — el blocking anterior (prefijo de 3 caracteres exactos, sensible a
-// errores de tipeo justo al principio del apellido) queda reemplazado por
-// esta consulta de similitud difusa. Ver PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md
-// sección 3.5.
-const UMBRAL_SIMILITUD_BLOCKING = 0.3;
+// Blocking multi-estrategia por índice invertido de tokens
+// (lib/servicios/persona-token.service.ts) — PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+// sección 4. Reemplaza el blocking anterior (similitud de trigramas sobre el
+// campo "apellido" COMPLETO): ese enfoque se volvía indulgente con apellidos
+// cortos que comparten sufijos comunes del español por pura morfología
+// compartida, sin relación real entre las palabras (caso real documentado:
+// "Abella" vs "Antonella" cruzaba el umbral de blocking solo por la
+// terminación "-ella"). El nuevo blocking compara TOKENS, no campos
+// completos, y usa distancia acotada en vez de similitud normalizada.
+async function obtenerCandidatosPorApellido(
+  apellido: string,
+  catalogoLexico: CatalogoLexicoIdentidad,
+): Promise<CandidatoParaComparar[]> {
+  const tokensApellido = tokenizarCampoEstructurado(apellido, catalogoLexico);
+  if (tokensApellido.length === 0) return [];
 
-async function obtenerCandidatosPorApellido(apellido: string): Promise<CandidatoParaComparar[]> {
-  const termino = apellido.trim();
-  if (termino.length < 2) return [];
-
-  const coincidencias = await prisma.$queryRaw<{ id: string }[]>`
-    SELECT id FROM "Persona"
-    WHERE "estadoFicha" != 'fusionada'
-      AND similarity(unaccent(lower(apellido)), unaccent(lower(${termino}))) > ${UMBRAL_SIMILITUD_BLOCKING}
-    ORDER BY similarity(unaccent(lower(apellido)), unaccent(lower(${termino}))) DESC
-    LIMIT 20
-  `;
-  if (coincidencias.length === 0) return [];
+  const ids = await buscarPersonaIdsPorTokens(tokensApellido, true);
+  if (ids.length === 0) return [];
 
   const candidatos = await prisma.persona.findMany({
-    where: { id: { in: coincidencias.map((c) => c.id) } },
+    where: { id: { in: ids }, estadoFicha: { not: "fusionada" } },
     include: { telefonos: true, emails: true },
   });
 
@@ -174,7 +173,7 @@ async function buscarCoincidenciaPorSimilitudDeNombre(
   umbral: number,
   catalogoLexico: CatalogoLexicoIdentidad,
 ): Promise<ResultadoBusquedaPersona> {
-  const candidatos = await obtenerCandidatosPorApellido(datos.apellido);
+  const candidatos = await obtenerCandidatosPorApellido(datos.apellido, catalogoLexico);
   if (candidatos.length === 0) return { tipo: "sin_candidatos" };
 
   const candidatosParaMostrar: CandidatoAmbiguo[] = candidatos.map((c) => ({

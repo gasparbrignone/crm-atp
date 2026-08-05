@@ -17,7 +17,13 @@ import {
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
 import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
 import { inscribirMasivoAction } from "@/app/(app)/actividades/participaciones.actions";
+import { asignarEtiquetaMasivoAction } from "@/app/(app)/personas/actions";
+import { estiloEtiqueta } from "@/lib/utils/etiqueta-color";
 import type { EstadoPadronPersona } from "@prisma/client";
+
+interface EtiquetaAsignadaFila {
+  etiqueta: { id: string; nombre: string; color: string | null };
+}
 
 interface PersonaFila {
   id: string;
@@ -28,6 +34,7 @@ interface PersonaFila {
   estadoPadronCD: EstadoPadronPersona;
   estadoPadronCE: EstadoPadronPersona;
   carrera: { nombre: string } | null;
+  etiquetas?: EtiquetaAsignadaFila[];
 }
 
 interface ActividadOpcion {
@@ -36,18 +43,28 @@ interface ActividadOpcion {
   cupoMaximo: number | null;
 }
 
+interface EtiquetaOpcion {
+  id: string;
+  nombre: string;
+}
+
 // Listado de Personas con selección múltiple para inscripción masiva a una
 // actividad — /07-modulo-participaciones.md sección 6 (flujo de inscripción
 // masiva desde un listado filtrado, con confirmación explícita si el cupo no
-// alcanza para todas las personas seleccionadas).
+// alcanza para todas las personas seleccionadas) — y, desde 2026-08-04, para
+// asignar una etiqueta a la selección (sección 6.4).
 export function TablaPersonasSeleccionable({
   personas,
   seleccionable,
   actividadesDisponibles,
+  puedeEtiquetarMasivo = false,
+  etiquetasDisponibles = [],
 }: {
   personas: PersonaFila[];
   seleccionable: boolean;
   actividadesDisponibles: ActividadOpcion[];
+  puedeEtiquetarMasivo?: boolean;
+  etiquetasDisponibles?: EtiquetaOpcion[];
 }) {
   const [seleccion, setSeleccion] = useState<Set<string>>(new Set());
   const [modalAbierto, setModalAbierto] = useState(false);
@@ -58,6 +75,25 @@ export function TablaPersonasSeleccionable({
     entrarian: number;
     total: number;
   } | null>(null);
+  const [modalEtiquetaAbierto, setModalEtiquetaAbierto] = useState(false);
+  const [etiquetaParaAsignar, setEtiquetaParaAsignar] = useState("");
+  const [mensajeEtiqueta, setMensajeEtiqueta] = useState<string | null>(null);
+
+  const puedeSeleccionar = seleccionable || puedeEtiquetarMasivo;
+
+  function confirmarAsignarEtiqueta() {
+    if (!etiquetaParaAsignar) return;
+    iniciarTransicion(async () => {
+      const resultado = await asignarEtiquetaMasivoAction(
+        Array.from(seleccion),
+        etiquetaParaAsignar,
+      );
+      setMensajeEtiqueta(
+        `Listo: ${resultado.asignadas} de ${resultado.total} persona(s) recibieron la etiqueta (el resto ya la tenía).`,
+      );
+      setSeleccion(new Set());
+    });
+  }
 
   function alternar(id: string) {
     setSeleccion((prev) => {
@@ -104,7 +140,7 @@ export function TablaPersonasSeleccionable({
 
   return (
     <div className="flex flex-col gap-3">
-      {seleccionable && seleccion.size > 0 && (
+      {puedeSeleccionar && seleccion.size > 0 && (
         <div className="flex items-center justify-between rounded-borde border border-secundario bg-secundario/5 px-4 py-2.5 text-sm">
           <span className="font-medium text-texto">
             {seleccion.size} persona{seleccion.size === 1 ? "" : "s"} seleccionada
@@ -114,7 +150,19 @@ export function TablaPersonasSeleccionable({
             <Button variant="fantasma" onClick={() => setSeleccion(new Set())}>
               Limpiar
             </Button>
-            <Button onClick={abrirModal}>Inscribir a actividad...</Button>
+            {puedeEtiquetarMasivo && etiquetasDisponibles.length > 0 && (
+              <Button
+                variant="secundario"
+                onClick={() => {
+                  setEtiquetaParaAsignar("");
+                  setMensajeEtiqueta(null);
+                  setModalEtiquetaAbierto(true);
+                }}
+              >
+                Asignar etiqueta...
+              </Button>
+            )}
+            {seleccionable && <Button onClick={abrirModal}>Inscribir a actividad...</Button>}
           </div>
         </div>
       )}
@@ -122,13 +170,14 @@ export function TablaPersonasSeleccionable({
       <Table>
         <TableHead>
           <tr>
-            {seleccionable && <TableHeaderCell className="w-10">{""}</TableHeaderCell>}
+            {puedeSeleccionar && <TableHeaderCell className="w-10">{""}</TableHeaderCell>}
             <TableHeaderCell>Nombre</TableHeaderCell>
             <TableHeaderCell>DNI</TableHeaderCell>
             <TableHeaderCell>Carrera</TableHeaderCell>
             <TableHeaderCell>Año</TableHeaderCell>
             <TableHeaderCell>{ETIQUETA_TIPO_PADRON.consejo_directivo}</TableHeaderCell>
             <TableHeaderCell>{ETIQUETA_TIPO_PADRON.centro_estudiantes}</TableHeaderCell>
+            <TableHeaderCell>Etiquetas</TableHeaderCell>
           </tr>
         </TableHead>
         <TableBody>
@@ -143,7 +192,7 @@ export function TablaPersonasSeleccionable({
           )}
           {personas.map((persona) => (
             <TableRow key={persona.id}>
-              {seleccionable && (
+              {puedeSeleccionar && (
                 <TableCell>
                   <input
                     type="checkbox"
@@ -181,6 +230,19 @@ export function TablaPersonasSeleccionable({
                 >
                   {ETIQUETA_ESTADO_PADRON[persona.estadoPadronCE]}
                 </span>
+              </TableCell>
+              <TableCell>
+                <div className="flex flex-wrap gap-1">
+                  {(persona.etiquetas ?? []).map((pe) => (
+                    <span
+                      key={pe.etiqueta.id}
+                      className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium"
+                      style={estiloEtiqueta(pe.etiqueta.color)}
+                    >
+                      {pe.etiqueta.nombre}
+                    </span>
+                  ))}
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -243,6 +305,45 @@ export function TablaPersonasSeleccionable({
               </Button>
             </div>
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        abierto={modalEtiquetaAbierto}
+        onCerrar={() => setModalEtiquetaAbierto(false)}
+        titulo="Asignar etiqueta"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-texto-secundario">
+            Se asignará la etiqueta elegida a {seleccion.size} persona
+            {seleccion.size === 1 ? "" : "s"}. Quien ya la tenga no se duplica.
+          </p>
+          <Select
+            label="Etiqueta"
+            value={etiquetaParaAsignar}
+            onChange={(e) => {
+              setEtiquetaParaAsignar(e.target.value);
+              setMensajeEtiqueta(null);
+            }}
+          >
+            <option value="">Seleccioná una etiqueta</option>
+            {etiquetasDisponibles.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nombre}
+              </option>
+            ))}
+          </Select>
+
+          {mensajeEtiqueta && <p className="text-sm text-exito">{mensajeEtiqueta}</p>}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="fantasma" onClick={() => setModalEtiquetaAbierto(false)}>
+              Cerrar
+            </Button>
+            <Button onClick={confirmarAsignarEtiqueta} disabled={pendiente || !etiquetaParaAsignar}>
+              {pendiente ? "Asignando..." : "Asignar"}
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>

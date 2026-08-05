@@ -10,10 +10,12 @@ import { BuscarDuplicadoFusion } from "@/components/personas/BuscarDuplicadoFusi
 import { HistorialPersona } from "@/components/personas/HistorialPersona";
 import { obtenerHistorialDeEntidad } from "@/lib/servicios/auditoria.service";
 import { PersonaTabs } from "@/components/personas/PersonaTabs";
+import { EtiquetasPersona } from "@/components/personas/EtiquetasPersona";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ETIQUETA_ESTADO_PADRON, COLOR_ESTADO_PADRON } from "@/lib/utils/persona-labels";
 import { ETIQUETA_TIPO_PADRON } from "@/lib/utils/padron-labels";
+import { estiloEtiqueta } from "@/lib/utils/etiqueta-color";
 import {
   ETIQUETA_ESTADO_PARTICIPACION,
   COLOR_ESTADO_PARTICIPACION,
@@ -28,16 +30,25 @@ export default async function PersonaDetallePage({
   await requerirPermiso("personas.ver");
   const { id } = await params;
 
-  const [persona, carreras, puedeEditar, puedeArchivar, puedeFusionar, participaciones, historial] =
-    await Promise.all([
-      obtenerPersona(id),
-      prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
-      tienePermiso("personas.editar"),
-      tienePermiso("personas.archivar"),
-      tienePermiso("personas.fusionar_duplicados"),
-      listarParticipacionesDePersona(id),
-      obtenerHistorialDeEntidad("Persona", id),
-    ]);
+  const [
+    persona,
+    carreras,
+    etiquetasDisponibles,
+    puedeEditar,
+    puedeArchivar,
+    puedeFusionar,
+    participaciones,
+    historial,
+  ] = await Promise.all([
+    obtenerPersona(id),
+    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+    prisma.etiqueta.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+    tienePermiso("personas.editar"),
+    tienePermiso("personas.archivar"),
+    tienePermiso("personas.fusionar_duplicados"),
+    listarParticipacionesDePersona(id),
+    obtenerHistorialDeEntidad("Persona", id),
+  ]);
 
   if (!persona) notFound();
 
@@ -90,6 +101,15 @@ export default async function PersonaDetallePage({
                   Archivada
                 </span>
               )}
+              {persona.etiquetas.map((pe) => (
+                <span
+                  key={pe.etiqueta.id}
+                  className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  style={estiloEtiqueta(pe.etiqueta.color)}
+                >
+                  {pe.etiqueta.nombre}
+                </span>
+              ))}
             </p>
           </div>
         </div>
@@ -237,6 +257,18 @@ export default async function PersonaDetallePage({
                   </Link>
                 ))}
               </div>
+            ),
+          },
+          {
+            id: "etiquetas",
+            etiqueta: "Etiquetas",
+            contenido: (
+              <EtiquetasPersona
+                personaId={persona.id}
+                asignadas={persona.etiquetas.map((pe) => pe.etiqueta)}
+                disponibles={etiquetasDisponibles}
+                editable={puedeEditar}
+              />
             ),
           },
           {

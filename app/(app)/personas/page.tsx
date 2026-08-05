@@ -27,15 +27,19 @@ export default async function PersonasPage({
     estadoPadronCD: sp.estadoPadronCD,
     estadoPadronCE: sp.estadoPadronCE,
     estadoFicha: sp.estadoFicha ?? "activa",
+    etiquetaId: sp.etiquetaId,
     pagina: sp.pagina ? Number(sp.pagina) : 1,
     porPagina: sp.porPagina ? Number(sp.porPagina) : 50,
   };
 
-  const [{ personas, total, pagina, porPagina }, carreras, puedeInscribirMasivo] = await Promise.all([
-    listarPersonas(filtros),
-    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
-    tienePermiso("participaciones.gestionar_masivo"),
-  ]);
+  const [{ personas, total, pagina, porPagina }, carreras, etiquetas, puedeInscribirMasivo, puedeEtiquetarMasivo] =
+    await Promise.all([
+      listarPersonas(filtros),
+      prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+      prisma.etiqueta.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+      tienePermiso("participaciones.gestionar_masivo"),
+      tienePermiso("personas.editar"),
+    ]);
 
   const actividadesDisponibles = puedeInscribirMasivo
     ? await prisma.actividad.findMany({
@@ -119,6 +123,14 @@ export default async function PersonasPage({
             <option value="activa">Activas</option>
             <option value="archivada">Archivadas</option>
           </Select>
+          <Select name="etiquetaId" defaultValue={sp.etiquetaId ?? ""} className="w-auto">
+            <option value="">Todas las etiquetas</option>
+            {etiquetas.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.nombre}
+              </option>
+            ))}
+          </Select>
           <Button type="submit" variant="secundario">
             <MdSearch size={18} />
             Filtrar
@@ -130,6 +142,8 @@ export default async function PersonasPage({
         personas={personas}
         seleccionable={puedeInscribirMasivo}
         actividadesDisponibles={actividadesDisponibles}
+        puedeEtiquetarMasivo={puedeEtiquetarMasivo}
+        etiquetasDisponibles={etiquetas}
       />
 
       {total > 0 && (

@@ -7,11 +7,17 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { crearPersonaAction, type EstadoFormularioPersona } from "../actions";
-import type { Carrera } from "@prisma/client";
+import type { Carrera, Etiqueta } from "@prisma/client";
 
 const estadoInicial: EstadoFormularioPersona = {};
 
-export function FormularioNuevaPersona({ carreras }: { carreras: Carrera[] }) {
+export function FormularioNuevaPersona({
+  carreras,
+  etiquetas,
+}: {
+  carreras: Carrera[];
+  etiquetas: Etiqueta[];
+}) {
   const [estado, formAction, enviando] = useActionState(crearPersonaAction, estadoInicial);
 
   return (
@@ -65,6 +71,25 @@ export function FormularioNuevaPersona({ carreras }: { carreras: Carrera[] }) {
           />
           <Input label="Instagram" name="instagram" placeholder="usuario (con o sin @)" />
           <Input label="Observaciones generales" name="observacionesGenerales" />
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-texto">Etiquetas</span>
+            {etiquetas.length > 0 && (
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {etiquetas.map((e) => (
+                  <label key={e.id} className="flex items-center gap-1.5 text-sm text-texto">
+                    <input type="checkbox" name="etiquetaIds" value={e.id} className="h-4 w-4" />
+                    {e.nombre}
+                  </label>
+                ))}
+              </div>
+            )}
+            <Input
+              name="etiquetasNuevasNombres"
+              placeholder="Crear etiqueta(s) nueva(s), separadas por coma"
+              ayuda="Opcional — se crean y se asignan al guardar"
+            />
+          </div>
         </div>
       </details>
 

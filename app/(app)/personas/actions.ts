@@ -9,6 +9,10 @@ import {
   archivarPersona,
   restaurarPersona,
   obtenerPersonasPorIds,
+  agregarEtiquetaAPersona,
+  quitarEtiquetaDePersona,
+  obtenerOCrearEtiquetaPorNombre,
+  asignarEtiquetaMasivo,
   DniDuplicadoError,
 } from "@/lib/servicios/personas.service";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
@@ -17,6 +21,7 @@ import {
   obtenerUmbralConfianzaDuplicados,
 } from "@/lib/ia/deteccion-duplicados";
 import { personaFormSchema } from "@/lib/validaciones/persona.validation";
+import { registrarVeredictoIdentidad } from "@/lib/servicios/veredictos-identidad.service";
 
 export interface CandidatoDuplicadoVista {
   id: string;
@@ -148,9 +153,21 @@ export async function crearPersonaAction(
     }
   }
 
+  const etiquetaIdsExistentes = formData.getAll("etiquetaIds").map(String).filter(Boolean);
+  const etiquetasNuevasNombres = String(formData.get("etiquetasNuevasNombres") ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  const etiquetasNuevas = await Promise.all(
+    etiquetasNuevasNombres.map((nombre) => obtenerOCrearEtiquetaPorNombre(nombre, usuario.id)),
+  );
+  const etiquetaIds = Array.from(
+    new Set([...etiquetaIdsExistentes, ...etiquetasNuevas.filter(Boolean).map((e) => e!.id)]),
+  );
+
   let personaId: string;
   try {
-    const persona = await crearPersona(parsed.data, usuario.id);
+    const persona = await crearPersona(parsed.data, usuario.id, etiquetaIds);
     personaId = persona.id;
   } catch (error) {
     if (error instanceof DniDuplicadoError) {
@@ -171,6 +188,24 @@ export async function crearPersonaAction(
         resultado: "confirmado_distinta",
       },
     });
+
+    // Veredicto humano — /PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección
+    // 3.9. No bloquea el alta ya confirmada si falla.
+    try {
+      const [candidatoDescartado] = await obtenerPersonasPorIds([personaCandidataId]);
+      if (candidatoDescartado) {
+        await registrarVeredictoIdentidad({
+          nombreObjetivo: `${parsed.data.nombre} ${parsed.data.apellido}`,
+          candidatoNombreCompleto: `${candidatoDescartado.nombre} ${candidatoDescartado.apellido}`,
+          candidatoId: candidatoDescartado.id,
+          decision: "distinta_persona",
+          contexto: "alta_manual",
+          usuarioId: usuario.id,
+        });
+      }
+    } catch {
+      // No interrumpe el alta ya confirmada.
+    }
   }
 
   revalidatePath("/personas");
@@ -220,4 +255,35 @@ export async function restaurarPersonaAction(personaId: string) {
   await restaurarPersona(personaId, usuario.id);
   revalidatePath(`/personas/${personaId}`);
   revalidatePath("/personas");
+}
+
+// Etiquetado — /05-modulo-personas.md sección 7: mismo permiso que edición
+// de campos, sin permiso adicional para crear una etiqueta nueva desde el
+// selector (la sección lo pide explícito, para no friccionar el uso diario).
+export async function agregarEtiquetaAction(personaId: string, etiquetaId: string) {
+  const usuario = await requerirPermiso("personas.editar");
+  await agregarEtiquetaAPersona(personaId, etiquetaId, usuario.id);
+  revalidatePath(`/personas/${personaId}`);
+}
+
+export async function quitarEtiquetaAction(personaId: string, etiquetaId: string) {
+  const usuario = await requerirPermiso("personas.editar");
+  await quitarEtiquetaDePersona(personaId, etiquetaId, usuario.id);
+  revalidatePath(`/personas/${personaId}`);
+}
+
+export async function crearYAgregarEtiquetaAction(personaId: string, nombre: string) {
+  const usuario = await requerirPermiso("personas.editar");
+  const etiqueta = await obtenerOCrearEtiquetaPorNombre(nombre, usuario.id);
+  if (!etiqueta) return;
+  await agregarEtiquetaAPersona(personaId, etiqueta.id, usuario.id);
+  revalidatePath(`/personas/${personaId}`);
+}
+
+// Acción masiva del listado (/05-modulo-personas.md sección 6.4).
+export async function asignarEtiquetaMasivoAction(personaIds: string[], etiquetaId: string) {
+  const usuario = await requerirPermiso("personas.editar");
+  const resultado = await asignarEtiquetaMasivo(personaIds, etiquetaId, usuario.id);
+  revalidatePath("/personas");
+  return resultado;
 }

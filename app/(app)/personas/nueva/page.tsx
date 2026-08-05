@@ -9,10 +9,10 @@ import { FormularioNuevaPersona } from "./FormularioNuevaPersona";
 // apellido son los únicos campos obligatorios; el resto se completa después.
 export default async function NuevaPersonaPage() {
   await requerirPermiso("personas.crear");
-  const carreras = await prisma.carrera.findMany({
-    where: { activo: true },
-    orderBy: { orden: "asc" },
-  });
+  const [carreras, etiquetas] = await Promise.all([
+    prisma.carrera.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+    prisma.etiqueta.findMany({ where: { activo: true }, orderBy: { orden: "asc" } }),
+  ]);
 
   return (
     <div className="mx-auto flex max-w-lg flex-col gap-4">
@@ -23,7 +23,7 @@ export default async function NuevaPersonaPage() {
         </Link>
       </div>
       <Card>
-        <FormularioNuevaPersona carreras={carreras} />
+        <FormularioNuevaPersona carreras={carreras} etiquetas={etiquetas} />
       </Card>
     </div>
   );

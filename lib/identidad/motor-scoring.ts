@@ -146,6 +146,50 @@ function compartenApellidoExacto(a: NombrePersonaTokenizado, b: NombrePersonaTok
   return apellidoA.some((t) => todosB.has(t)) || apellidoB.some((t) => todosA.has(t));
 }
 
+// Similitud CONSERVADORA entre dos tokens — a diferencia de
+// similitudMultiAlgoritmo (que toma el MÁXIMO de Jaro-Winkler y Dice, para
+// favorecer recall al detectar que dos strings SÍ se parecen), acá se toma
+// el MÍNIMO de los dos. Motivo, encontrado con el benchmark real: Jaro
+// pondera fuerte el término `coincidencias/largoMenor`, así que dos
+// palabras de longitud muy distinta que comparten apenas 2 caracteres
+// pueden dar un Jaro-Winkler ~60% (ej. "nicolas" vs "soto" comparten las
+// letras "o" y "s" en posiciones dentro de la ventana de Jaro) sin ninguna
+// relación real — Dice de bigramas, en cambio, da 0% para ese mismo par
+// (ningún bigrama de 2 caracteres en común). Para decidir "¿hay evidencia
+// real de que estas dos palabras estén relacionadas?" (a diferencia de "¿se
+// parecen por ALGUNA medida?"), exigir que AMBAS métricas coincidan es más
+// conservador y evita el falso positivo que dio el máximo.
+function similitudConservadora(a: string, b: string): number {
+  if (!a || !b) return 0;
+  return Math.min(similitudJaroWinkler(a, b), coeficienteDice(a, b));
+}
+
+// Mejor similitud DIFUSA (conservadora) entre el/los tokens de apellido de
+// un lado y el CONJUNTO COMPLETO de tokens del otro — mismo patrón que
+// compartenApellidoExacto (deliberadamente NO apellido-contra-apellido,
+// para no heredar errores de partición de tokenizarNombrePersona: "Juan
+// Perez" vs "Juan Perez Garcia" no puede fallar por un error de partición,
+// solo por una diferencia real). Se usa como señal de "¿hay ALGUNA relación
+// real entre los apellidos?", distinta del veto binario de arriba — acá
+// interesa el valor de similitud, no solo si es exacta.
+function mejorSimilitudApellidoContraTodos(
+  a: NombrePersonaTokenizado,
+  b: NombrePersonaTokenizado,
+): number {
+  const apellidoA = a.tokensApellido.filter((t) => t.length >= 3);
+  const apellidoB = b.tokensApellido.filter((t) => t.length >= 3);
+  if (apellidoA.length === 0 && apellidoB.length === 0) return 1; // sin evidencia suficiente para vetar
+
+  let mejor = 0;
+  for (const ta of apellidoA) {
+    for (const tb of b.tokens) mejor = Math.max(mejor, similitudConservadora(ta, tb));
+  }
+  for (const tb of apellidoB) {
+    for (const ta of a.tokens) mejor = Math.max(mejor, similitudConservadora(tb, ta));
+  }
+  return mejor;
+}
+
 // Punto de entrada del motor: compara dos nombres completos (texto libre,
 // cualquier orden/formato) y devuelve una confianza 0-1 con desglose
 // explicable de cada señal que contribuyó.
@@ -283,6 +327,53 @@ export function calcularConfianzaIdentidad(
       aporte: 0,
       descripcion:
         "el apellido es parecido pero no coincide de forma exacta — confianza limitada para forzar revisión manual (apellidos distintos pueden parecerse por azar)",
+    });
+  }
+
+  // Tercera compuerta — PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+  // secciones 2 y 9: el apellido no es "una señal más que suma", es el
+  // requisito real de que exista evidencia de identidad. Un nombre de pila
+  // compartido (baja distintividad — miles de personas lo comparten) puede
+  // empujar la confianza combinada hasta la banda de revisión aunque el
+  // apellido no tenga NINGUNA relación real con el candidato. Caso real
+  // reportado 2026-08-05: "Abril Nicolás" vs "Abril Soto" comparte el token
+  // "Abril" (nombre de pila idéntico + bonus de conjunto completo) y llegaba
+  // a ~57% de confianza — dentro de la banda de revisión — aunque "Nicolás"
+  // y "Soto" no tienen ninguna similitud real. Distinta de la compuerta
+  // anterior (que actúa sobre apellidos PARECIDOS pero no exactos, evidencia
+  // real aunque débil, y solo se activa por encima de 0.6): acá el apellido
+  // no aporta evidencia EN ABSOLUTO, así que el candidato no debería llegar
+  // ni a revisión manual — se fuerza por debajo del piso de descarte
+  // (`PISO_CONFIANZA_REVISION` en politica-decision.ts), no solo por debajo
+  // del umbral de auto-vinculación.
+  //
+  // Usa `mejorSimilitudApellidoContraTodos` (apellido vs. CONJUNTO COMPLETO
+  // del otro lado), no `simApellido` (apellido-contra-apellido) — la primera
+  // versión de esta compuerta comparaba apellido contra apellido
+  // directamente y rompía el benchmark real (recall del motor combinado
+  // cayó de 98% a 93%): con nombres de 3 tokens sin coma que ganan un cuarto
+  // token (ej. "Candela Cejas" → "Candela Cejas Fernandez", categoría
+  // "apellido_materno_de_mas" del benchmark, MISMA persona), la heurística
+  // de partición reasigna qué tokens son apellido (`cantidadApellido` pasa
+  // de 1 a 2), y el apellido real ("Cejas") queda comparado contra un
+  // apellido distinto ("Fernandez") por un artefacto de partición, no por
+  // una diferencia real — exactamente el problema que `compartenApellidoExacto`
+  // ya evita comparando contra el conjunto completo en vez de partición
+  // contra partición. Con la señal robusta, "Cejas" se encuentra igual
+  // dentro del conjunto completo del otro lado y la compuerta no dispara.
+  // Umbral 0.5 y techo 0.35 calibrados contra scripts/benchmark-identidad.ts.
+  const SIN_RELACION_APELLIDO = 0.5;
+  const TECHO_SIN_EVIDENCIA_APELLIDO = 0.35;
+  const simApellidoRobusta = mejorSimilitudApellidoContraTodos(a, b);
+  if (simApellidoRobusta < SIN_RELACION_APELLIDO && confianza > TECHO_SIN_EVIDENCIA_APELLIDO) {
+    confianza = TECHO_SIN_EVIDENCIA_APELLIDO;
+    evidencias.push({
+      nombre: "compuerta_apellido_sin_evidencia",
+      valor: simApellidoRobusta,
+      peso: 0,
+      aporte: 0,
+      descripcion:
+        "el apellido no tiene ninguna relación real con el candidato — un nombre de pila compartido no es evidencia suficiente por sí solo, se descarta",
     });
   }
 

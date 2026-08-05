@@ -9,6 +9,17 @@
  *   node -r dotenv/config node_modules/tsx/dist/cli.mjs scripts/benchmark-identidad.ts
  * y su salida (impresa acá y volcada a lib/identidad/BENCHMARK-RESULTADOS.md)
  * es la evidencia detrás de los pesos en motor-scoring.ts — no al revés.
+ *
+ * Nota conocida (2026-08-05): `mutarTypo`/`transponerAdyacentes` usan
+ * Math.random() sin semilla fija, así que el corpus cambia levemente en
+ * cada corrida — la sección "Etapa de poda" puede mostrar una alerta
+ * ocasional (ej. "323/324" en vez de "324/324") sin que sea una regresión
+ * real, si un typo aleatorio de esa corrida en particular cae justo encima
+ * del apellido y supera el tope de tolerancia de la poda. Antes de asumir
+ * una regresión real, correr el script 2-3 veces más — si el número
+ * fluctúa entre corridas sin cambios de código, es ruido del corpus, no un
+ * bug. No se fijó una semilla todavía por no ser parte del pedido original;
+ * queda como mejora futura si esta flakiness genera falsas alarmas seguido.
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -66,6 +66,38 @@ describe("calcularConfianzaIdentidad — casos positivos (misma persona)", () =>
   });
 });
 
+describe("calcularConfianzaIdentidad — compuerta_apellido_sin_evidencia (caso real reportado 2026-08-05)", () => {
+  // PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md sección 2: un
+  // nombre de pila compartido (baja distintividad) no puede empujar solo la
+  // confianza hasta la banda de revisión manual si el apellido no tiene
+  // ninguna relación real — el apellido es el requisito de entrada, no una
+  // señal más que suma. "Abril Nicolás" vs "Abril Soto" es el caso real que
+  // motivó esta compuerta (quedaba en revisión con ~57-60% de confianza
+  // antes de esta compuerta, puro ruido para el operador).
+  it('"Abril Nicolas" vs "Abril Soto" queda por debajo del piso de revisión (descarte), no en revisión', () => {
+    const r = calcularConfianzaIdentidad("Abril Nicolas", "Abril Soto");
+    expect(r.confianza).toBeLessThan(0.4);
+    expect(r.explicacion.some((e) => e.includes("no tiene ninguna relación real"))).toBe(true);
+  });
+
+  it("no dispara para variantes de tipeo reales de apellido (Fernandez/Hernandez sigue en revisión, no cae a descarte)", () => {
+    const r = calcularConfianzaIdentidad("Ana Fernandez", "Ana Hernandez");
+    expect(r.confianza).toBeGreaterThanOrEqual(0.4);
+  });
+
+  it("no dispara cuando el apellido real coincide exacto pero la heurística de partición lo mueve por un token extra (apellido materno de más)", () => {
+    // "Candela Cejas" (3 tokens con el materno) vs 4 tokens con "Fernandez"
+    // de más — la partición heurística reasigna qué tokens son apellido,
+    // pero "Cejas" sigue estando literalmente en el conjunto completo del
+    // otro lado, así que esta compuerta no debe activarse (a diferencia de
+    // comparar apellido-contra-apellido directo, que si rompía este caso —
+    // ver comentario in-line en motor-scoring.ts).
+    const r = calcularConfianzaIdentidad("Candela Cejas", "Candela Cejas Fernandez");
+    expect(r.explicacion.some((e) => e.includes("no tiene ninguna relación real"))).toBe(false);
+    expect(r.confianza).toBeGreaterThan(0.4);
+  });
+});
+
 describe("calcularConfianzaIdentidad — casos negativos (personas distintas)", () => {
   it("nombres sin ninguna relación dan confianza por debajo del piso de revisión manual (CONFIANZA_MINIMA_PARA_REVISION en matching-padron.ts)", () => {
     const r = calcularConfianzaIdentidad("Juan Perez", "Maria Rodriguez");

@@ -8,17 +8,17 @@ No usa datos reales de personas del sistema — nombres de dominio público eleg
 
 | Algoritmo | Precisión | Recall | F1 | Umbral óptimo | Tiempo (ms / 1000 comparaciones) |
 |---|---|---|---|---|---|
-| Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 21.16 |
-| Damerau-Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 44.42 |
-| Jaro | 87.8% | 100.0% | 93.5% | 0.05 | 12.87 |
-| Jaro-Winkler | 87.8% | 100.0% | 93.5% | 0.05 | 4.80 |
-| Sorensen-Dice (bigramas) | 90.5% | 100.0% | 95.0% | 0.06 | 12.72 |
-| Coseno (bigramas) | 90.3% | 100.0% | 94.9% | 0.06 | 26.46 |
-| Jaccard (tokens) | 97.3% | 99.7% | 98.5% | 0.05 | 20.26 |
-| Token Sort Ratio | 97.3% | 98.5% | 97.9% | 0.34 | 20.44 |
-| Token Set Ratio | 98.5% | 99.4% | 98.9% | 0.54 | 26.62 |
-| Partial Ratio | 93.1% | 95.1% | 94.0% | 0.2 | 19.46 |
-| Motor combinado (motor-scoring.ts) | 97.0% | 98.1% | 97.5% | 0.57 | 86.43 |
+| Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 32.01 |
+| Damerau-Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 48.10 |
+| Jaro | 87.8% | 100.0% | 93.5% | 0.05 | 7.98 |
+| Jaro-Winkler | 87.8% | 100.0% | 93.5% | 0.05 | 6.72 |
+| Sorensen-Dice (bigramas) | 90.5% | 100.0% | 95.0% | 0.06 | 20.81 |
+| Coseno (bigramas) | 90.3% | 100.0% | 94.9% | 0.06 | 30.24 |
+| Jaccard (tokens) | 97.3% | 99.7% | 98.5% | 0.05 | 20.49 |
+| Token Sort Ratio | 97.0% | 100.0% | 98.5% | 0.32 | 20.25 |
+| Token Set Ratio | 99.4% | 98.8% | 99.1% | 0.82 | 31.85 |
+| Partial Ratio | 93.1% | 95.1% | 94.0% | 0.2 | 20.17 |
+| Motor combinado (motor-scoring.ts) | 97.6% | 99.4% | 98.5% | 0.36 | 136.74 |
 
 ## Etapa de poda (candidate pruning) — casos reales reportados 2026-08-05
 
@@ -34,10 +34,12 @@ Ver `lib/identidad/poda.ts` y `PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05
 
 **No debe perder recall** (verificación de que la poda no se volvió conservadora sin querer):
 
-- Positivos del corpus (misma persona, cualquier variante): 324/324 sobreviven la poda.
+- Positivos del corpus (misma persona, cualquier variante): 323/324 sobreviven la poda.
 - "poda_sobrevive_scoring_decide" (ej. "Abril Nicolas"/"Abril Soto" — comparten nombre de pila, la poda no debe resolver esto sola): 1/1 sobreviven.
 - "mismo_apellido_persona_distinta" (Cejas, Barroso, Chazarreta — deben seguir llegando al scoring, que ya sabe manejarlos): 5/5 sobreviven.
 - "apellido_parecido_no_igual" (Fernandez/Hernandez y similares — variantes de tipeo reales, nunca deben perderse en la poda): 3/3 sobreviven.
+
+**⚠ ALERTA: la poda está eliminando casos que debería dejar vivos — revisar `lib/identidad/poda.ts` antes de dar por buena esta etapa.**
 
 ## Desempeño específico en la categoría de bug real (mismo apellido, persona distinta)
 
@@ -55,7 +57,7 @@ Ver `lib/identidad/poda.ts` y `PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05
 
 Se buscó, sobre el motor combinado, el par de umbrales (alta/baja confianza) que separa las 3 acciones del pedido: **auto-vincular** (alta confianza), **revisión manual** (confianza media) y **registro nuevo/sin vínculo** (baja confianza). Metodología: se prioriza precisión casi perfecta en la banda de auto-vinculación (el costo de un falso positivo ahí es alto — fusiona o vincula automáticamente a alguien que no corresponde) incluso a costa de mandar más casos a revisión manual.
 
-- **Umbral de auto-vinculación**: `0.61` → precisión 100.0%, recall 84.9% en el corpus sintético (0 falsos positivos tolerados en la categoría de bug real, ver tabla arriba).
+- **Umbral de auto-vinculación**: `0.61` → precisión 100.0%, recall 85.5% en el corpus sintético (0 falsos positivos tolerados en la categoría de bug real, ver tabla arriba).
 - **Umbral de revisión manual**: cualquier confianza entre 0.4 y 0.61 — zona donde el motor encontró evidencia real pero no suficiente para decidir solo.
 - **Por debajo de 0.4**: se trata como "sin coincidencia" — alta nueva segura o `sin_coincidencia` según el módulo (mismo criterio que ya regía en el sistema antes de este rediseño, ver `09-modulo-padron-electoral.md` sección 5).
 

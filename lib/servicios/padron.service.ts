@@ -4,7 +4,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { buscarPersonaParaEntradaPadron } from "@/lib/ia/matching-padron";
 import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
-import { prepararLotesPadronPdf, leerLotePadronPdf } from "@/lib/ia/lectura-padron-pdf";
+import { prepararLotesPadronPdf, parsearLotePadron } from "@/lib/padron/lectura-padron";
+import { registrarVeredictoIdentidad } from "@/lib/servicios/veredictos-identidad.service";
+import { obtenerCatalogoLexicoIdentidad } from "@/lib/servicios/lexico-identidad.service";
+import type { CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
 import {
   notificarImportacionFinalizada,
   notificarPadronActivado,
@@ -13,19 +16,23 @@ import {
 import type { CampoPadronImportable } from "@/lib/utils/csv-mapping-padron";
 import type { Prisma, TipoPadronElectoral } from "@prisma/client";
 
-// Tope duro de tiempo para un lote de padrón: los reintentos internos por
-// cuota (cliente-ia.ts) y por respuesta mal formada (lectura-padron-pdf.ts)
-// están acotados, pero encadenados podrían en teoría seguir sumando cerca
-// del límite real de duración de función de Vercel (300s en el plan
-// gratuito) — bug real 2026-08-02: dos lotes seguidos murieron con "Task
-// timed out after 300 seconds" sin llegar a devolver un error entendible.
-// Se corta acá bastante antes de esa pared, con un mensaje claro, para que
-// el cliente reintente con una invocación nueva (con su propio presupuesto
-// de tiempo) en vez de perder el intento entero en un timeout duro.
+// Tope duro de tiempo para un lote de padrón — bug real 2026-08-02: dos
+// lotes seguidos murieron con "Task timed out after 300 seconds" (el límite
+// real de duración de función en el plan gratuito de Vercel) sin llegar a
+// devolver un error entendible. Se corta acá bastante antes de esa pared,
+// con un mensaje claro, para que el cliente reintente con una invocación
+// nueva (con su propio presupuesto de tiempo) en vez de perder el intento
+// entero en un timeout duro. **Corrección 2026-08-04**: el mensaje original
+// atribuía la lentitud a "contención en la cuota gratuita de la IA" — ya no
+// aplica, todo el pipeline de padrón (extracción de texto, estructuración en
+// filas, matching contra Personas) es determinístico desde esta fecha, sin
+// ninguna llamada a IA (ver lib/padron/lectura-padron.ts). Lo que puede
+// seguir siendo lento con un padrón grande son los round-trips a la base
+// para el matching de cada fila, no una cuota externa.
 export class TiempoLoteAgotadoError extends Error {
   constructor() {
     super(
-      "Este lote está tardando demasiado, probablemente por contención en la cuota gratuita de la IA. No se perdió nada de lo ya procesado — reintentá.",
+      "Este lote está tardando demasiado. No se perdió nada de lo ya procesado — reintentá.",
     );
     this.name = "TiempoLoteAgotadoError";
   }
@@ -150,8 +157,10 @@ interface DatosEntradaPadron {
   nombreCompletoOriginal: string;
   carreraTextoOriginal?: string | null;
   // Solo presente en lecturas de PDF (/15-ia.md sección 4) — qué tan segura
-  // está la IA de haber leído bien la fila, distinto de la confianza de
-  // matching. Ausente para CSV, donde el dato ya viene como texto exacto.
+  // está la extracción de haber leído bien la fila (siempre 1 desde el
+  // parser determinístico de 2026-08-04, ver lib/padron/lectura-padron.ts),
+  // distinto de la confianza de matching. Ausente para CSV, donde el dato ya
+  // viene como texto exacto.
   confianzaExtraccion?: number;
 }
 
@@ -160,10 +169,15 @@ interface DatosEntradaPadron {
 // extracción cuando corresponde (PDF): una lectura insegura del documento
 // nunca se vincula sola, aunque el nombre matchee perfecto — hay que mirar
 // el original antes de confiar en el dato (/15-ia.md sección 4.2).
-async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMatching: number) {
+async function resolverDatosMatchingEntrada(
+  datos: DatosEntradaPadron,
+  umbralMatching: number,
+  catalogoLexico: CatalogoLexicoIdentidad,
+) {
   const resultadoMatching = await buscarPersonaParaEntradaPadron(
     { dni: datos.dni, nombreCompletoOriginal: datos.nombreCompletoOriginal },
     umbralMatching,
+    catalogoLexico,
   );
 
   const extraccionDudosa =
@@ -225,11 +239,13 @@ async function resolverDatosMatchingEntrada(datos: DatosEntradaPadron, umbralMat
 // en producción, 2026-08-01, con el padrón de Medicina). Se resuelve el
 // matching de todas las filas en paralelo (con límite de concurrencia) y se
 // inserta todo con un único `createMany` al final en vez de un `create` por
-// fila. La mayoría de las filas no llaman a la IA (solo cuando hay candidato
-// por nombre — la mayoría son sin_coincidencia, resuelto solo con consultas a
-// la base); las que sí llaman a la IA ya respetan el límite real de la cuota
-// gratuita de Gemini a través del limitador de tasa compartido en
-// cliente-ia.ts, así que esta concurrencia no necesita subestimarse.
+// fila. **Corrección 2026-08-04**: el comentario original decía que "las
+// filas que sí llaman a la IA ya respetan el límite de cuota" — desde esta
+// fecha `buscarPersonaParaEntradaPadron()` (lib/ia/matching-padron.ts) es
+// 100% determinístico, sin ninguna llamada a IA (ver
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md) — la única razón real para
+// acotar esta concurrencia hoy es no saturar el pool de conexiones a
+// Postgres, no una cuota externa.
 const CONCURRENCIA_MATCHING = 10;
 
 interface FilaPadronParaProcesar {
@@ -249,6 +265,10 @@ async function procesarFilasPadronEnParalelo(
   const filasOmitidas: { numeroFila: number; motivo: string }[] = [];
   const paraCrear: Prisma.PadronEntradaCreateManyInput[] = [];
   let siguienteIndice = 0;
+  // Una sola consulta para todo el lote, no una por fila — mismo criterio
+  // que ya rige para `umbral` acá abajo (ver PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+  // sección 6): el catálogo léxico no cambia en medio de una carga de padrón.
+  const catalogoLexico = await obtenerCatalogoLexicoIdentidad();
 
   async function trabajador() {
     while (siguienteIndice < filas.length) {
@@ -281,6 +301,7 @@ async function procesarFilasPadronEnParalelo(
             confianzaExtraccion: fila.confianzaExtraccion,
           },
           umbral,
+          catalogoLexico,
         );
 
         paraCrear.push({
@@ -410,12 +431,17 @@ interface IniciarImportacionPadronPdfInput {
 // Se procesa en dos etapas (iniciar + procesar lote por lote) en vez de una
 // sola llamada, porque el plan real de este proyecto es el gratuito de
 // Vercel (Hobby — nunca se paga por infraestructura, decisión explícita de
-// Gaspar 2026-08-02) y la cuota gratuita de Gemini (15 requests/min, ver
-// /15-ia.md sección 8) hace que leer un padrón real de decenas de páginas
-// pueda tardar varios minutos — mucho más que cualquier límite de duración
-// de función del plan gratuito. Subir el PDF y calcular los lotes es rápido
-// (no llama a la IA) y deja el padrón listo para que el cliente vaya
-// pidiendo lotes de a uno.
+// Gaspar 2026-08-02), que tiene un límite de 300s por función. **Corrección
+// 2026-08-04**: la razón original de este diseño era la cuota de Gemini (15
+// requests/min) — ya no aplica, la lectura de PDF es determinística desde
+// esta fecha (lib/padron/lectura-padron.ts) y tarda milisegundos, no
+// minutos. Se mantiene el procesamiento incremental por dos razones que sí
+// siguen vigentes: (1) el *matching* de cada fila contra la base sigue
+// siendo trabajo real de base de datos, que con un padrón de miles de filas
+// puede seguir acercándose al límite de 300s si se hiciera todo en una sola
+// función; (2) la barra de progreso visible en la UI durante la carga, que
+// ya es parte de la experiencia esperada. Subir el PDF y calcular los lotes
+// deja el padrón listo para que el cliente vaya pidiendo lotes de a uno.
 export async function iniciarImportacionPadronPdf({
   padronId,
   usuarioId,
@@ -455,10 +481,11 @@ export interface ResultadoLotePadron {
 // Procesa exactamente el siguiente lote sin leer del PDF que no haya sido
 // procesado todavía — pensado para que el cliente lo llame repetidas veces
 // hasta `completado: true`, mostrando progreso, sin depender de que una sola
-// función serverless aguante los varios minutos que puede tardar el padrón
-// completo. Cada fila extraída con confianza de lectura baja queda
-// `pendiente` para revisión visual, nunca se incorpora silenciosamente con
-// un posible error de lectura (/15-ia.md sección 4.2).
+// función serverless aguante todo el padrón completo (ver comentario de
+// iniciarImportacionPadronPdf). Una línea del PDF que no matchea el formato
+// esperado (lib/padron/lectura-padron.ts) nunca se pierde en silencio: queda
+// reportada como fila omitida con el texto original, igual que cualquier
+// otro tipo de fila que no se pudo procesar.
 export async function procesarSiguienteLotePadron(
   padronId: string,
   usuarioId: string,
@@ -491,7 +518,10 @@ export async function procesarSiguienteLotePadron(
 
   const lotes = await prepararLotesPadronPdf(pdfBuffer);
   const indiceLote = padron.lotesProcesados;
-  const entradasDelLote = await conLimiteDeTiempo(leerLotePadronPdf(lotes, indiceLote), 160_000);
+  // Determinístico y sincrónico desde 2026-08-04 — ya no hace falta
+  // conLimiteDeTiempo() acá, no hay ninguna llamada externa que pueda
+  // colgarse (ver lib/padron/lectura-padron.ts).
+  const { entradas: entradasDelLote, lineasNoReconocidas } = parsearLotePadron(lotes[indiceLote]);
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
   const filasParaProcesar: FilaPadronParaProcesar[] = entradasDelLote.map((entrada, i) => ({
@@ -507,10 +537,24 @@ export async function procesarSiguienteLotePadron(
       padronId,
       filasParaProcesar,
       umbral,
-      "La IA no pudo leer DNI o nombre en esta fila del documento.",
+      "Falta DNI o nombre en esta fila.",
     ),
     100_000,
   );
+
+  // Líneas del PDF que no matchearon el formato esperado — se agregan a las
+  // omitidas del lote con el texto original, para revisión humana, en vez de
+  // perderse (ver lib/padron/lectura-padron.ts).
+  if (lineasNoReconocidas.length > 0) {
+    const numeroFilaBase = indiceLote * 1000 + entradasDelLote.length;
+    resultadoLote.filasOmitidas.push(
+      ...lineasNoReconocidas.map((linea, i) => ({
+        numeroFila: numeroFilaBase + i + 1,
+        motivo: `Línea del PDF no reconocida por el parser: "${linea}"`,
+      })),
+    );
+    resultadoLote.omitidas += lineasNoReconocidas.length;
+  }
 
   const lotesProcesados = indiceLote + 1;
   await prisma.padronElectoral.update({
@@ -554,6 +598,11 @@ export async function vincularEntradaManualmente(
   personaId: string,
   usuarioId: string,
 ) {
+  const [entradaAntes, personaVinculada] = await Promise.all([
+    prisma.padronEntrada.findUniqueOrThrow({ where: { id: entradaId } }),
+    prisma.persona.findUnique({ where: { id: personaId } }),
+  ]);
+
   const entrada = await prisma.padronEntrada.update({
     where: { id: entradaId },
     data: {
@@ -571,6 +620,25 @@ export async function vincularEntradaManualmente(
     campo: "personaId",
     valorNuevo: personaId,
   });
+
+  // Veredicto humano — /PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección
+  // 3.9. No bloquea la vinculación si falla: es un registro para
+  // recalibración futura, no una condición de la operación real.
+  if (personaVinculada) {
+    try {
+      await registrarVeredictoIdentidad({
+        nombreObjetivo: entradaAntes.nombreCompletoOriginal,
+        candidatoNombreCompleto: `${personaVinculada.nombre} ${personaVinculada.apellido}`,
+        candidatoId: personaVinculada.id,
+        decision: "misma_persona",
+        contexto: "padron",
+        usuarioId,
+      });
+    } catch {
+      // No interrumpe el flujo real — ver comentario del servicio.
+    }
+  }
+
   return entrada;
 }
 
@@ -578,6 +646,8 @@ export async function vincularEntradaManualmente(
 // — RN sección 6: no puede quedar en el limbo de `pendiente`, pero tampoco
 // hace falta vincularla a la fuerza si de verdad no corresponde a nadie.
 export async function marcarEntradaSinCoincidencia(entradaId: string, usuarioId: string) {
+  const entradaAntes = await prisma.padronEntrada.findUniqueOrThrow({ where: { id: entradaId } });
+
   const entrada = await prisma.padronEntrada.update({
     where: { id: entradaId },
     data: {
@@ -595,6 +665,32 @@ export async function marcarEntradaSinCoincidencia(entradaId: string, usuarioId:
     campo: "estadoMatching",
     valorNuevo: "sin_coincidencia",
   });
+
+  // Veredicto humano por cada candidato que se le había sugerido y descartó
+  // — mismo criterio que vincularEntradaManualmente, ver
+  // /PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.9.
+  if (entradaAntes.candidatosSugeridos) {
+    try {
+      const candidatos = JSON.parse(entradaAntes.candidatosSugeridos) as {
+        id: string;
+        nombre: string;
+        apellido: string;
+      }[];
+      for (const candidato of candidatos) {
+        await registrarVeredictoIdentidad({
+          nombreObjetivo: entradaAntes.nombreCompletoOriginal,
+          candidatoNombreCompleto: `${candidato.nombre} ${candidato.apellido}`,
+          candidatoId: candidato.id,
+          decision: "distinta_persona",
+          contexto: "padron",
+          usuarioId,
+        });
+      }
+    } catch {
+      // JSON inválido o fallo de escritura — no interrumpe el flujo real.
+    }
+  }
+
   return entrada;
 }
 
@@ -713,6 +809,59 @@ export async function cerrarPadron(padronId: string, usuarioId: string) {
   });
 
   return prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
+}
+
+export class PadronNoEsBorradorError extends Error {
+  constructor() {
+    super(
+      "Solo se puede borrar un padrón en estado \"borrador\". Un padrón activo o cerrado ya tuvo efecto real sobre el estado de las Personas o es historial electoral — no se borra, se cierra.",
+    );
+    this.name = "PadronNoEsBorradorError";
+  }
+}
+
+// Borrado de un padrón — excepción puntual al principio de "cero pérdida de
+// datos" (/01-vision-alcance.md sección 8, principio 3), mismo criterio que
+// ya reconoce RN-5 para el borrado de un comentario de punteo por error
+// grave: reservado a un permiso administrativo (`padron.gestionar`, ver
+// /10-usuarios-roles-permisos.md — hoy solo lo tiene el rol Administrador) y
+// siempre registrado en HistorialCambio antes de borrar. Se restringe a
+// padrones en estado `borrador` a propósito: uno `activo` o `cerrado` ya
+// tuvo efecto real (recalculó `estado_padron` de Personas reales, quedó
+// como historial electoral) — borrarlo perdería ese registro sin dejar
+// rastro real de qué pasó, que es exactamente lo que el principio de "cero
+// pérdida de datos" existe para evitar. Un borrador nunca tuvo ese efecto, así
+// que borrarlo es deshacer una carga en curso, no perder historia real. Las
+// `PadronEntrada` de este padrón se borran en cascada (`onDelete: Cascade`
+// en el modelo, ver schema.prisma) — ninguna puede estar vinculada
+// (`vinculado_manual`/`vinculado_automatico`) a esta altura sin que el
+// padrón ya estuviera activo, así que no hay Persona real afectada.
+export async function eliminarPadron(padronId: string, usuarioId: string) {
+  const padron = await prisma.padronElectoral.findUniqueOrThrow({ where: { id: padronId } });
+  if (padron.estado !== "borrador") throw new PadronNoEsBorradorError();
+
+  await registrarCambio({
+    entidad: "PadronElectoral",
+    entidadId: padronId,
+    accion: "otro",
+    usuarioId,
+    metadata: {
+      proceso: "eliminar_padron",
+      nombre: padron.nombre,
+      tipo: padron.tipo,
+      entradasAlMomentoDeBorrar: await prisma.padronEntrada.count({ where: { padronElectoralId: padronId } }),
+    },
+  });
+
+  if (padron.archivoOrigenId) {
+    const admin = createAdminClient();
+    // No fatal si falla — el archivo original queda huérfano en Storage,
+    // recuperable a mano, pero no vale la pena bloquear el borrado del
+    // registro por un problema de limpieza de almacenamiento.
+    await admin.storage.from("importaciones").remove([padron.archivoOrigenId]).catch(() => {});
+  }
+
+  await prisma.padronElectoral.delete({ where: { id: padronId } });
 }
 
 // Re-chequeo automático: si una Persona recién creada tiene DNI y hay

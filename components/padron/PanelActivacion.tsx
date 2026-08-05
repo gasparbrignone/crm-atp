@@ -4,7 +4,11 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { activarPadronAction, cerrarPadronAction } from "@/app/(app)/padron/[id]/actions";
+import {
+  activarPadronAction,
+  cerrarPadronAction,
+  eliminarPadronAction,
+} from "@/app/(app)/padron/[id]/actions";
 
 // Activar/cerrar un padrón recalcula Persona.estado_padron para todo el
 // sistema (/09-modulo-padron-electoral.md sección 7) y cierra automáticamente
@@ -21,7 +25,7 @@ export function PanelActivacion({
   puedeActivarse: boolean;
   pendientes: number;
 }) {
-  const [modal, setModal] = useState<"activar" | "cerrar" | null>(null);
+  const [modal, setModal] = useState<"activar" | "cerrar" | "borrar" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [procesando, iniciarTransicion] = useTransition();
   const router = useRouter();
@@ -47,6 +51,18 @@ export function PanelActivacion({
     });
   }
 
+  function confirmarBorrar() {
+    setError(null);
+    iniciarTransicion(async () => {
+      const resultado = await eliminarPadronAction(padronId);
+      if (!resultado.ok) {
+        setError(resultado.error ?? "No se pudo borrar el padrón.");
+        return;
+      }
+      router.push("/padron");
+    });
+  }
+
   if (estado === "cerrado") return null;
 
   return (
@@ -55,6 +71,11 @@ export function PanelActivacion({
         {estado === "borrador" && (
           <Button onClick={() => setModal("activar")} disabled={!puedeActivarse}>
             Activar padrón
+          </Button>
+        )}
+        {estado === "borrador" && (
+          <Button variant="peligro" onClick={() => setModal("borrar")}>
+            Borrar padrón
           </Button>
         )}
         {estado === "activo" && (
@@ -106,6 +127,29 @@ export function PanelActivacion({
             </Button>
             <Button variant="peligro" onClick={confirmarCerrar} disabled={procesando}>
               {procesando ? "Cerrando..." : "Sí, cerrar"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal abierto={modal === "borrar"} onCerrar={() => setModal(null)} titulo="Borrar este padrón" variante="destructiva">
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-texto-secundario">
+            Se borran definitivamente este padrón y todas sus entradas cargadas. Esto no se puede
+            deshacer. Solo se puede borrar mientras está en estado &ldquo;Borrador&rdquo; — nunca un
+            padrón activo o cerrado, que ya forman parte del historial electoral.
+          </p>
+          {error && (
+            <p role="alert" className="text-sm text-error">
+              {error}
+            </p>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="fantasma" onClick={() => setModal(null)} disabled={procesando}>
+              Cancelar
+            </Button>
+            <Button variant="peligro" onClick={confirmarBorrar} disabled={procesando}>
+              {procesando ? "Borrando..." : "Sí, borrar"}
             </Button>
           </div>
         </div>

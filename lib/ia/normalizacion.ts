@@ -37,7 +37,11 @@ export function normalizarNombrePropio(texto: string): string {
 // Formato internacional argentino (+54 9 ...) — asume celular, que es el caso
 // abrumadoramente mayoritario en contactos de estudiantes. No intenta
 // distinguir línea fija de celular (requeriría una tabla de códigos de área).
-export function normalizarTelefono(texto: string): string {
+// Nombre explícito "ParaGuardar" (PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md
+// P9) para no confundirla con normalizarTelefonoParaComparar() de
+// deteccion-duplicados.ts, que resuelve un problema distinto (comparar, no
+// formatear para guardar) y por eso no puede compartir esta implementación.
+export function normalizarTelefonoParaGuardar(texto: string): string {
   let digitos = texto.replace(/\D/g, "");
   if (!digitos) return texto.trim();
 

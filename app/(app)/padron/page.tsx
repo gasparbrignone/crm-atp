@@ -14,6 +14,7 @@ import {
   TableCell,
   TableEmptyState,
 } from "@/components/ui/Table";
+import { BotonBorrarPadron } from "@/components/padron/BotonBorrarPadron";
 
 const ETIQUETA_ESTADO: Record<string, string> = {
   borrador: "Borrador",
@@ -32,9 +33,10 @@ const COLOR_ESTADO: Record<string, string> = {
 // histórica.
 export default async function PadronPage() {
   await requerirPermiso("padron.ver");
-  const [padrones, puedeImportar] = await Promise.all([
+  const [padrones, puedeImportar, puedeGestionar] = await Promise.all([
     listarPadrones(),
     tienePermiso("padron.importar"),
+    tienePermiso("padron.gestionar"),
   ]);
 
   return (
@@ -66,6 +68,7 @@ export default async function PadronPage() {
               <TableHeaderCell>Estado</TableHeaderCell>
               <TableHeaderCell>Entradas</TableHeaderCell>
               <TableHeaderCell>Cargado</TableHeaderCell>
+              {puedeGestionar && <TableHeaderCell>{""}</TableHeaderCell>}
             </tr>
           </TableHead>
           <TableBody>
@@ -92,6 +95,13 @@ export default async function PadronPage() {
                 </TableCell>
                 <TableCell>{p._count.entradas}</TableCell>
                 <TableCell>{new Date(p.fechaCarga).toLocaleDateString("es-AR")}</TableCell>
+                {puedeGestionar && (
+                  <TableCell>
+                    {p.estado === "borrador" && (
+                      <BotonBorrarPadron padronId={p.id} nombre={p.nombre} />
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

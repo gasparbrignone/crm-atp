@@ -8,8 +8,10 @@ import {
   crearPersonaDesdeEntradaPadron,
   activarPadron,
   cerrarPadron,
+  eliminarPadron,
   buscarPersonasParaVincular,
   PadronPendientesSinResolverError,
+  PadronNoEsBorradorError,
 } from "@/lib/servicios/padron.service";
 
 export async function buscarPersonasParaVincularAction(query: string) {
@@ -74,4 +76,22 @@ export async function cerrarPadronAction(padronId: string) {
   revalidatePath(`/padron/${padronId}`);
   revalidatePath("/padron");
   revalidatePath("/personas");
+}
+
+export interface ResultadoEliminarPadron {
+  ok: boolean;
+  error?: string;
+}
+
+// Solo padrones en borrador — ver PadronNoEsBorradorError en padron.service.ts.
+export async function eliminarPadronAction(padronId: string): Promise<ResultadoEliminarPadron> {
+  const usuario = await requerirPermiso("padron.gestionar");
+  try {
+    await eliminarPadron(padronId, usuario.id);
+  } catch (e) {
+    if (e instanceof PadronNoEsBorradorError) return { ok: false, error: e.message };
+    throw e;
+  }
+  revalidatePath("/padron");
+  return { ok: true };
 }

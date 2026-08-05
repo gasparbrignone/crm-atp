@@ -90,7 +90,7 @@ Cada exportación queda registrada en `ExportJob` (ver [`04-modelo-datos.md`](./
 
 ## 9. Reglas de negocio del módulo
 
-- Toda importación que cree o modifique una `Persona` pasa por la misma verificación de duplicados que el alta manual (ver [`05-modulo-personas.md`](./05-modulo-personas.md#32-verificación-de-duplicados-en-el-momento-del-alta)) — no existe un "modo rápido" de importación que la omita.
+- Toda importación que cree o modifique una `Persona` pasa por la misma verificación de duplicados que el alta manual (ver [`05-modulo-personas.md`](./05-modulo-personas.md#32-verificación-de-duplicados-en-el-momento-del-alta)) — no existe un "modo rápido" de importación que la omita. **Nota 2026-08-04**: esta regla estuvo desactualizada respecto del código real entre el alta de este documento y el 2026-08-04 — la importación CSV genérica de Personas (`lib/servicios/importaciones.service.ts`) solo comparaba DNI exacto, sin usar el Motor de Resolución de Identidad (nombre difuso) que sí usaban el alta manual y la importación de inscriptos a Actividad, hallazgo de `PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md` sección 3.4 (P2). Corregido el mismo día: las 3 vías comparten ahora `resolverOCrearPersona()` en `lib/servicios/personas.service.ts`.
 - El archivo original de cualquier importación se conserva en Supabase Storage, asociado al `ImportJob`, para poder auditar o reprocesar.
 - Una exportación que incluya el campo `estado_padron` o cualquier dato vinculado a punteo requiere, además del permiso de exportación del módulo correspondiente, que el usuario ya tuviera permiso de lectura sobre esos datos en primer lugar (una exportación nunca es una vía para acceder a datos que el usuario no podría ver navegando el sistema normalmente).
 

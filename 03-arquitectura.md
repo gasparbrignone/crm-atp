@@ -203,6 +203,8 @@ Cada servicio en `lib/servicios/` corresponde 1 a 1 con un módulo funcional doc
 | `notificaciones.service.ts` | [`13-notificaciones.md`](./13-notificaciones.md) |
 | `busqueda.service.ts` | [`12-buscador-global.md`](./12-buscador-global.md) |
 | `lib/ia/*` | [`15-ia.md`](./15-ia.md) |
+| `lib/identidad/*` | Motor de Resolución de Identidad determinístico — ver su propio `README.md`, referenciado desde [`15-ia.md`](./15-ia.md#2-detección-de-duplicados) |
+| `lib/padron/*` | Lectura determinística de padrón en PDF (sin IA desde 2026-08-04) — ver [`09-modulo-padron-electoral.md`](./09-modulo-padron-electoral.md) y [`15-ia.md`](./15-ia.md#4-lectura-automática-de-padrones-en-pdf) |
 | `lib/permisos/*` | [`10-usuarios-roles-permisos.md`](./10-usuarios-roles-permisos.md) |
 
 ## 7. Estrategia de datos: Prisma + Supabase

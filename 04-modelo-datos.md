@@ -124,6 +124,8 @@ La entidad central del sistema. Ver el detalle funcional completo (estados, cicl
 | `numero` | Texto corto | Obligatorio | Se almacena normalizado (ver [`15-ia.md`](./15-ia.md)) en formato internacional, ej. `+549341XXXXXXX` |
 | `es_principal` | Booleano | Default `false` | Exactamente un teléfono por Persona debe tener `es_principal = true` cuando existe al menos un teléfono cargado (regla de negocio, ver sección 18.3) |
 | `notas` | Texto corto | Opcional | Ej.: "WhatsApp", "no responde llamadas" |
+| `origen` | Enum `OrigenDato` | Opcional | `alta_manual` \| `importacion_csv` \| `importacion_actividad` \| `padron` \| `editado_manual`. `NULL` en registros previos al 2026-08-04 (dato desconocido, no se infiere retroactivamente) — ver `PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md` sección 3.3 |
+| `fecha_creacion` | Fecha y hora | Autogenerado | Junto con `es_principal`, permite distinguir "el principal" de "el último cargado" (no siempre son el mismo) |
 
 ### 5.3 PersonaEmail
 
@@ -133,6 +135,8 @@ La entidad central del sistema. Ver el detalle funcional completo (estados, cicl
 | `persona_id` | UUID | FK → `Persona.id`, obligatorio | — |
 | `email` | Texto corto | Obligatorio, formato válido de correo | — |
 | `es_principal` | Booleano | Default `false` | Misma regla que en `PersonaTelefono` |
+| `origen` | Enum `OrigenDato` | Opcional | Mismo enum y mismo criterio que en `PersonaTelefono` |
+| `fecha_creacion` | Fecha y hora | Autogenerado | — |
 
 ## 6. Núcleo: Actividad y Participación
 
@@ -183,7 +187,10 @@ Ver detalle funcional en [`06-modulo-actividades.md`](./06-modulo-actividades.md
 | `color` | Texto corto | Opcional | — |
 | `categoria` | Texto corto | Opcional | Agrupador libre (ej. "rol dentro del curso", "prioridad") |
 | `activo` | Booleano | Default `true` | — |
+| `orden` | Entero | Opcional | Posición de presentación en selectores, igual que en los otros 3 catálogos editables (sección 2 de `18-configuracion-sistema.md`) |
 | `creado_por` | UUID | FK → `Usuario.id` | — |
+
+> **Corrección 2026-08-04**: `orden` faltaba en esta tabla (y en el modelo Prisma real) desde el alta original del catálogo — bug real encontrado al construir la UI de asignación de etiquetas (`05-modulo-personas.md` sección 7): `/configuracion?tab=etiqueta` tiraba un error en cada visita porque el código de gestión de catálogos (`lib/servicios/configuracion.service.ts`) ya asumía este campo para los 4 catálogos por igual. Corregido con la migración `20260804115920_etiqueta_orden` (con backfill alfabético para las etiquetas ya cargadas).
 
 ### 7.2 PersonaEtiqueta
 
@@ -346,6 +353,24 @@ Tabla única, genérica, que registra tanto el historial de cambios de entidades
 
 **Regla de append-only**: esta tabla no admite `UPDATE` ni `DELETE` desde la aplicación, solo `INSERT`. Es la garantía técnica central de que la auditoría es confiable.
 
+### 11.2 VeredictoIdentidad
+
+**Agregada 2026-08-04** — ver `PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md` sección 3.9. Registra cada vez que un humano confirma o rechaza una sugerencia de posible duplicado del Motor de Resolución de Identidad (`lib/identidad/`, ver su README) — alta manual, fusión de fichas, o revisión de padrón. No decide nada por sí sola: es un corpus de veredictos reales para, cuando haya volumen suficiente, recalibrar `umbral_confianza_duplicados` contra casos reales en vez de solo el corpus sintético del benchmark (`lib/identidad/BENCHMARK-RESULTADOS.md`).
+
+| Campo | Tipo | Restricciones | Descripción |
+|---|---|---|---|
+| `id` | UUID | PK | — |
+| `nombre_objetivo` | Texto largo | Obligatorio | Nombre completo que se estaba evaluando (el nuevo dato entrante) |
+| `candidato_id` | UUID | Obligatorio, sin FK física | ID de la Persona candidata evaluada (puede quedar apuntando a una ficha luego fusionada o archivada — no se seguiría automáticamente) |
+| `confianza` | Decimal(4,3) | Obligatorio | Confianza recalculada en el momento de capturar el veredicto (no un valor guardado de antes, que puede no existir — ej. vinculación manual sin candidatos automáticos previos) |
+| `explicacion` | Texto largo | Obligatorio | Desglose legible de las señales del motor para ese par, igual formato que se muestra en la UI de sugerencias |
+| `decision` | Enum | Obligatorio | `misma_persona` \| `distinta_persona` |
+| `contexto` | Texto corto | Obligatorio | `alta_manual` \| `fusion_manual` \| `padron` |
+| `usuario_id` | UUID | FK → `Usuario.id`, opcional | — |
+| `fecha` | Fecha y hora | Autogenerado, obligatorio | — |
+
+No es append-only por regla explícita como `HistorialCambio` (no forma parte de la auditoría de acciones sobre una entidad), pero en la práctica tampoco se edita ni se borra desde la aplicación — es un log de eventos de captura, igual de inmutable en los hechos.
+
 ## 12. Notificaciones
 
 Ver detalle funcional en [`13-notificaciones.md`](./13-notificaciones.md).
@@ -491,7 +516,7 @@ Estas reglas complementan lo ya indicado campo por campo. Cada una tiene un iden
 
 **RN-1 — Unicidad de persona.** El sistema no debe permitir intencionalmente dos fichas para el mismo individuo. La prevención activa (detección de duplicados al crear o importar) se documenta en [`15-ia.md`](./15-ia.md); esta regla define el objetivo, no el mecanismo.
 
-**RN-2 — Fusión conserva historia.** Al fusionar dos fichas de Persona, la ficha no elegida como definitiva pasa a `estado_ficha = fusionada` con `fusionada_en_id` apuntando a la definitiva. No se borra físicamente. Toda `Participacion`, `PunteoPersona` y entrada de `HistorialCambio` que apuntaba a la ficha fusionada se re-vincula a la ficha definitiva, y el propio evento de fusión queda registrado en `HistorialCambio`.
+**RN-2 — Fusión conserva historia.** Al fusionar dos fichas de Persona, la ficha no elegida como definitiva pasa a `estado_ficha = fusionada` con `fusionada_en_id` apuntando a la definitiva. No se borra físicamente. Toda `Participacion`, `PunteoPersona`, `PadronEntrada`, `PersonaEtiqueta` y entrada de `HistorialCambio` que apuntaba a la ficha fusionada se re-vincula a la ficha definitiva (para las relaciones con restricción de unicidad — `Participacion` por actividad, `PunteoPersona` por usuario, `PersonaEtiqueta` por etiqueta — si la definitiva ya tenía la misma relación, la de la descartada se descarta en vez de duplicarla, igual que RN-4 para re-inscripciones), y el propio evento de fusión queda registrado en `HistorialCambio`. **Nota 2026-08-04**: la re-vinculación de `PersonaEtiqueta` faltaba en la implementación hasta esta fecha — no era alcanzable en la práctica porque todavía no existía ninguna UI para asignar etiquetas a una Persona (ver `05-modulo-personas.md` sección 7); corregido al construir esa UI.
 
 **RN-3 — Un único contacto principal por tipo.** Para `PersonaTelefono` y `PersonaEmail`, exactamente un registro por Persona puede tener `es_principal = true` cuando existe al menos uno cargado. Al marcar uno nuevo como principal, el anterior se desmarca automáticamente en la misma operación (transacción única).
 

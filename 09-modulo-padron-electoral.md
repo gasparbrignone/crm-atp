@@ -21,7 +21,7 @@
 
 Digitalizar el padrón electoral oficial (publicado por la facultad o la universidad, típicamente en PDF) y cruzarlo automáticamente contra la base de `Persona` del sistema, para que en todo momento se sepa, de forma confiable y sin trabajo manual repetido, quién está habilitado para votar en la elección vigente.
 
-Este módulo es uno de los principales consumidores de las capacidades de IA del sistema (lectura automática de PDFs) — ver el detalle técnico de ese proceso en [`15-ia.md`](./15-ia.md#4-lectura-automática-de-padrones-en-pdf).
+**Corrección 2026-08-04**: hasta esta fecha, este módulo era uno de los principales consumidores de las capacidades de IA del sistema (lectura automática de PDFs). Ya no lo es — la lectura de PDF, la estructuración en filas, y el matching contra Personas son los tres 100% determinísticos hoy (parser propio + Motor de Resolución de Identidad, `lib/padron/lectura-padron.ts` y `lib/identidad/`, ver el detalle histórico y la justificación completa en [`15-ia.md`](./15-ia.md#4-lectura-automática-de-padrones-en-pdf)).
 
 ## 2. Distinción clave: padrón vs. punteo
 
@@ -47,7 +47,7 @@ borrador → activo → cerrado
 ## 4. Carga de un padrón
 
 1. El usuario crea un nuevo `PadronElectoral` (nombre, fecha de elección opcional) y sube el archivo original (PDF, o alternativamente CSV/Excel si la facultad lo publica en ese formato — reutiliza la infraestructura general de [`14-importaciones-exportaciones.md`](./14-importaciones-exportaciones.md)).
-2. El sistema extrae, vía IA, cada fila del documento como una `PadronEntrada`: DNI, nombre completo tal como figura en el original, y carrera si el documento la incluye. Ver el detalle del proceso de extracción en [`15-ia.md`](./15-ia.md#4-lectura-automática-de-padrones-en-pdf).
+2. El sistema extrae, con un parser determinístico (no IA, desde 2026-08-04), cada fila del documento como una `PadronEntrada`: DNI, nombre completo tal como figura en el original, y carrera si el documento la incluye. Ver el detalle del proceso de extracción en [`15-ia.md`](./15-ia.md#4-lectura-automática-de-padrones-en-pdf).
 3. Se ejecuta automáticamente el proceso de *matching* (sección 5) sobre todas las entradas recién creadas.
 4. El padrón queda en estado `borrador`, listo para revisión manual (sección 6).
 
@@ -94,6 +94,7 @@ Cada recálculo masivo de `estado_padron` queda registrado en `HistorialCambio` 
 - Activar un padrón nuevo cierra automáticamente el anterior en la misma operación transaccional — nunca quedan dos padrones `activo` ni siquiera momentáneamente.
 - El archivo original cargado (PDF/CSV/Excel) se conserva en Supabase Storage de forma indefinida mientras exista el `PadronElectoral` correspondiente, para poder auditar o re-procesar si se detectara un error de lectura.
 - Ninguna `PadronEntrada` se elimina al re-procesar: si se vuelve a importar un padrón, se crea un `PadronElectoral` nuevo, nunca se sobrescribe uno existente.
+- **Borrado de un padrón (agregado 2026-08-04)**: excepción puntual al principio de "cero pérdida de datos", igual criterio que ya reconoce RN-5 para el borrado de un comentario de punteo por error grave. Solo se puede borrar un padrón en estado `borrador` — nunca uno `activo` o `cerrado`, que ya tuvieron efecto real sobre `Persona.estado_padron` o forman parte del historial electoral. Borra en cascada todas sus `PadronEntrada`, requiere `padron.gestionar`, y queda registrado en `HistorialCambio` antes de borrar.
 
 ## 10. Permisos relevantes
 

@@ -53,11 +53,16 @@ describe("buscarPersonaCoincidente — piso de confianza (P4)", () => {
     expect(resultado.tipo).toBe("sin_candidatos");
   });
 
-  it("candidato en banda de revisión (piso ≤ confianza < umbral) → 'ambiguo'", async () => {
-    // Mismo apellido exacto, nombre de pila distinto: la compuerta topea a
-    // 0.6, que cae en la banda de revisión para un umbral de 0.65 — mismo
-    // caso que el bug histórico de Cejas, nunca debe auto-vincular ni
-    // descartarse silencioso.
+  it("mismo apellido exacto, nombre de pila sin ninguna relación → 'sin_candidatos' (decisión de producto 2026-08-05)", async () => {
+    // Hasta 2026-08-05 este caso topeaba a 0.6 y caía en la banda de
+    // revisión ("ambiguo") — mismo caso que el bug histórico de Cejas.
+    // Cambió a pedido explícito de Gaspar tras ver el volumen real de
+    // revisión manual de un padrón real (miles de filas, sin DNI cargado en
+    // casi ninguna Persona existente): sin DNI, "mismo apellido, nombre sin
+    // relación" es una ambigüedad que ningún dato adicional puede resolver,
+    // así que forzar revisión ahí es puro costo sin beneficio real — se
+    // trata como sin_candidatos, igual que si el apellido no hubiera
+    // coincidido en absoluto (ver compuerta_nombre_minimo en motor-scoring.ts).
     queryRawMock.mockResolvedValue([{ personaId: "candidato-mismo-apellido" }]);
     personaFindManyMock.mockResolvedValue([
       { id: "candidato-mismo-apellido", nombre: "Damaris", apellido: "Cejas", telefonos: [], emails: [] },
@@ -67,6 +72,21 @@ describe("buscarPersonaCoincidente — piso de confianza (P4)", () => {
       { nombre: "Candela", apellido: "Cejas" },
       UMBRAL,
     );
+
+    expect(resultado.tipo).toBe("sin_candidatos");
+  });
+
+  it("apellido parecido pero no exacto, nombre de pila SÍ coincide → sigue siendo 'ambiguo' (evidencia real de posible typo, vale la pena revisar)", async () => {
+    // Distinto del caso de arriba: acá el nombre de pila SÍ es evidencia
+    // real de que puede ser la misma persona con un typo de apellido — este
+    // caso no cambió con la decisión de producto 2026-08-05, sigue yendo a
+    // revisión manual (compuerta_apellido_no_exacto en motor-scoring.ts).
+    queryRawMock.mockResolvedValue([{ personaId: "candidato-apellido-parecido" }]);
+    personaFindManyMock.mockResolvedValue([
+      { id: "candidato-apellido-parecido", nombre: "Ana", apellido: "Hernandez", telefonos: [], emails: [] },
+    ]);
+
+    const resultado = await buscarPersonaCoincidente({ nombre: "Ana", apellido: "Fernandez" }, UMBRAL);
 
     expect(resultado.tipo).toBe("ambiguo");
   });

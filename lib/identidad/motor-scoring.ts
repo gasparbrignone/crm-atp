@@ -293,19 +293,30 @@ export function calcularConfianzaIdentidadEntreTokenizados(
   // Compuerta determinística de nombre mínimo — sin esto, un apellido exacto
   // (peso 0.42, la señal más alta) más ruido difuso en el resto alcanza para
   // cruzar el umbral de auto-vinculación aunque el nombre de pila sea otra
-  // persona completamente distinta. Medido con el benchmark real: SIN esta
-  // compuerta, "Constanza Barroso" vs "Cindy Barroso" (mismo apellido,
-  // nombre de pila sin relación — el patrón exacto del bug de producción de
-  // 2026-08-03) da 77.4% de confianza, por encima del umbral de
-  // auto-vinculación calculado (73%), porque la similitud DIFUSA entre
-  // "constanza" y "cindy" da ~59% solo por azar de caracteres compartidos —
-  // no alcanza con un umbral difuso más alto, hace falta la verificación
-  // estricta de contención de substring (compartenTokenDeNombre), el mismo
-  // criterio ya probado en producción. Una suma ponderada lineal sola
-  // SIEMPRE puede fallar así sea cual sea el peso del apellido — nada le
-  // impide a una señal fuerte sola empujar el total por encima del umbral
-  // sin una regla de veto explícita.
-  const TECHO_SIN_NOMBRE_SUFICIENTE = 0.6;
+  // persona completamente distinta. Origen: "Constanza Barroso" vs "Cindy
+  // Barroso" (mismo apellido, nombre de pila sin relación — bug de
+  // producción 2026-08-03) daba 77.4% de confianza, por encima del umbral
+  // de auto-vinculación, porque la similitud DIFUSA entre "constanza" y
+  // "cindy" da ~59% solo por azar de caracteres compartidos.
+  //
+  // Decisión de producto 2026-08-05 (Gaspar, tras revisar el volumen real
+  // de revisión manual del padrón de Medicina — sin DNI cargado en casi
+  // ninguna Persona existente, "mismo apellido, nombre de pila sin
+  // relación" es una ambigüedad que NINGÚN dato adicional puede resolver
+  // ahí: no hay nada que un humano pueda mirar para desambiguar sin DNI, así
+  // que forzar revisión manual en este caso específico es puro costo de
+  // trabajo sin beneficio real de precisión). Antes de esta fecha, este
+  // caso topeaba a 0.6 (banda de revisión manual). Ahora se fuerza por
+  // debajo del piso de revisión (mismo criterio que la compuerta de
+  // apellido sin evidencia, más abajo) — se trata directo como "sin
+  // coincidencia", exactamente igual que si el apellido no hubiera
+  // coincidido en absoluto. Distinto de la compuerta de apellido fuzzy más
+  // abajo (apellido parecido pero no exacto, nombre SÍ coincide): ese caso
+  // sigue yendo a revisión, porque ahí el nombre de pila coincidente SÍ es
+  // evidencia real de que puede ser un typo de apellido, vale la pena que
+  // un humano lo mire.
+  const TECHO_SIN_NOMBRE_SUFICIENTE = 0.35;
+  const TECHO_APELLIDO_NO_EXACTO = 0.6;
   if (!compartenTokenDeNombre(a.tokensNombre, b.tokensNombre) && confianza > TECHO_SIN_NOMBRE_SUFICIENTE) {
     confianza = TECHO_SIN_NOMBRE_SUFICIENTE;
     evidencias.push({
@@ -314,7 +325,7 @@ export function calcularConfianzaIdentidadEntreTokenizados(
       peso: 0,
       aporte: 0,
       descripcion:
-        "el apellido coincide pero el nombre de pila no comparte ningún token real — confianza limitada para forzar revisión manual, nunca auto-vinculación",
+        "el apellido coincide pero el nombre de pila no comparte ningún token real — sin DNI para desambiguar, se trata como sin coincidencia en vez de forzar revisión manual sin beneficio real (decisión de producto 2026-08-05)",
     });
   }
 
@@ -334,8 +345,8 @@ export function calcularConfianzaIdentidadEntreTokenizados(
   // "parecida" pasa a revisión manual sin importar cuán bien coincida el
   // resto — mismo criterio de precisión-sobre-recall que la compuerta de
   // nombre de arriba.
-  if (!compartenApellidoExacto(a, b) && confianza > TECHO_SIN_NOMBRE_SUFICIENTE) {
-    confianza = TECHO_SIN_NOMBRE_SUFICIENTE;
+  if (!compartenApellidoExacto(a, b) && confianza > TECHO_APELLIDO_NO_EXACTO) {
+    confianza = TECHO_APELLIDO_NO_EXACTO;
     evidencias.push({
       nombre: "compuerta_apellido_no_exacto",
       valor: simApellido,

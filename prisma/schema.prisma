@@ -224,23 +224,41 @@ model Persona {
   @@index([apellido, nombre])
 }
 
+// Origen de un dato de contacto — PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md
+// sección 3.3: evidencia mínima ("¿de dónde vino esto?") sobre los dos
+// campos donde en la práctica importa (teléfono, email), sin un modelo de
+// evidencia genérico nuevo. `null` en registros preexistentes a esta
+// migración (dato desconocido, no "alta_manual" a secas — no inventar un
+// origen que no se puede afirmar con certeza).
+enum OrigenDato {
+  alta_manual
+  importacion_csv
+  importacion_actividad
+  padron
+  editado_manual
+}
+
 model PersonaTelefono {
-  id          String  @id @default(uuid())
-  personaId   String
-  persona     Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
-  numero      String
-  esPrincipal Boolean @default(false)
-  notas       String?
+  id            String      @id @default(uuid())
+  personaId     String
+  persona       Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  numero        String
+  esPrincipal   Boolean     @default(false)
+  notas         String?
+  origen        OrigenDato?
+  fechaCreacion DateTime    @default(now())
 
   @@index([personaId])
 }
 
 model PersonaEmail {
-  id          String  @id @default(uuid())
-  personaId   String
-  persona     Persona @relation(fields: [personaId], references: [id], onDelete: Cascade)
-  email       String
-  esPrincipal Boolean @default(false)
+  id            String      @id @default(uuid())
+  personaId     String
+  persona       Persona     @relation(fields: [personaId], references: [id], onDelete: Cascade)
+  email         String
+  esPrincipal   Boolean     @default(false)
+  origen        OrigenDato?
+  fechaCreacion DateTime    @default(now())
 
   @@index([personaId])
 }
@@ -324,6 +342,7 @@ model Etiqueta {
   color       String?
   categoria   String?
   activo      Boolean  @default(true)
+  orden       Int?
   creadoPorId String?
   creadoPor   Usuario? @relation("EtiquetaCreadoPor", fields: [creadoPorId], references: [id])
 
@@ -380,6 +399,8 @@ model Usuario {
   punteos                     PunteoPersona[]
   padronesElectoralesCargados PadronElectoral[]      @relation("PadronElectoralCargadoPor")
   historialCambios            HistorialCambio[]
+  veredictosIdentidad         VeredictoIdentidad[]
+  lexicoNombrePropioCreado    LexicoNombrePropio[]   @relation("LexicoNombrePropioCreadoPor")
   notificaciones              Notificacion[]
   importJobs                  ImportJob[]
   exportJobs                  ExportJob[]
@@ -480,11 +501,12 @@ model PadronElectoral {
   cargadoPorId    String?
   cargadoPor      Usuario?              @relation("PadronElectoralCargadoPor", fields: [cargadoPorId], references: [id])
 
-  // Progreso de importación de PDF por lotes — /15-ia.md sección 8: la cuota
-  // gratuita de Gemini (15 req/min) obliga a procesar el PDF en varios
-  // requests cortos en vez de uno solo que podría tardar varios minutos y
-  // superar el límite de duración del plan gratuito de Vercel. `null` en
-  // ambos campos significa "sin una importación de PDF en curso".
+  // Progreso de importación de PDF por lotes — se procesa en varios requests
+  // cortos en vez de uno solo, para no superar el límite de duración del
+  // plan gratuito de Vercel (300s) con un padrón grande — ver
+  // lib/padron/lectura-padron.ts y /15-ia.md sección 4 (lectura determinística
+  // desde 2026-08-04, ya no por cuota de IA). `null` en ambos campos
+  // significa "sin una importación de PDF en curso".
   lotesTotales    Int?
   lotesProcesados Int                   @default(0)
 
@@ -531,6 +553,79 @@ model HistorialCambio {
 
   @@index([entidad, entidadId, fecha])
   @@index([usuarioId])
+}
+
+// Veredictos humanos sobre pares evaluados por el Motor de Resolución de
+// Identidad — PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.9 (plan de
+// validación con datos reales): cada vez que una persona confirma o rechaza
+// una sugerencia de posible duplicado (alta manual, fusión, revisión de
+// padrón), queda un registro con el par comparado, la confianza que calculó
+// el motor en ese momento y la decisión humana — corpus real para, cuando
+// haya volumen suficiente, recalibrar `umbral_confianza_duplicados` contra
+// casos reales en vez de solo el corpus sintético de
+// lib/identidad/BENCHMARK-RESULTADOS.md. No decide nada por sí solo: es
+// solo el registro de lo que un humano ya decidió, nunca se lee para tomar
+// una decisión automática.
+enum VeredictoDecision {
+  misma_persona
+  distinta_persona
+}
+
+model VeredictoIdentidad {
+  id             String            @id @default(uuid())
+  nombreObjetivo String
+  candidatoId    String
+  confianza      Decimal           @db.Decimal(4, 3)
+  explicacion    String
+  decision       VeredictoDecision
+  contexto       String
+  usuarioId      String?
+  usuario        Usuario?          @relation(fields: [usuarioId], references: [id])
+  fecha          DateTime          @default(now())
+
+  @@index([contexto, fecha])
+  @@index([candidatoId])
+}
+
+// Catálogo léxico del Motor de Resolución de Identidad —
+// PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md sección 6: la
+// tokenización de nombres argentinos necesita reconocer nombres compuestos
+// frecuentes ("Juan José", "María Belén" — sin esto, el segundo token de un
+// nombre compuesto se lee por error como parte del apellido) y partículas de
+// apellido ("de la", "del", "di", "mc", "o'" — sin esto, "de la Cruz" se
+// corta mal cuando no hay coma explícita en el texto original). Pedido
+// explícito: NO hardcodear estas listas en código — tienen que vivir en un
+// catálogo configurable (mismo patrón que Carrera/TipoActividad/Etiqueta,
+// ver CLAUDE.md sección 4 "Catálogos configurables, no hardcodeados"), con
+// valores por defecto precargados en el seed pero ampliable sin tocar
+// código ni redeployar. `lib/identidad/normalizar.ts` recibe este catálogo
+// como dato (no lo consulta directo — mantiene esa capa 100% pura y sin
+// Prisma, ver lib/identidad/README.md); quien lo carga desde la base es
+// lib/servicios/lexico-identidad.service.ts.
+enum TipoLexicoIdentidad {
+  nombre_compuesto
+  particula_apellido
+}
+
+model LexicoNombrePropio {
+  id                String              @id @default(uuid())
+  tipo              TipoLexicoIdentidad
+  // Normalizado (minúscula, sin acentos) antes de guardar — ver
+  // normalizarTextoIdentidad(). Para nombre_compuesto, 2+ palabras separadas
+  // por un espacio ("juan jose"); para particula_apellido, 1-2 palabras
+  // ("de la", "mc").
+  valor             String
+  activo            Boolean             @default(true)
+  // "seed" = precargado en prisma/seed.ts, "manual" = agregado desde la UI
+  // de configuración por un usuario — distinción solo informativa, no
+  // cambia el comportamiento del motor.
+  origen            String              @default("seed")
+  creadoPorId       String?
+  creadoPor         Usuario?            @relation("LexicoNombrePropioCreadoPor", fields: [creadoPorId], references: [id])
+  fechaCreacion     DateTime            @default(now())
+
+  @@unique([tipo, valor])
+  @@index([tipo, activo])
 }
 
 // ─────────────────────────────────────────────────────────────────────────

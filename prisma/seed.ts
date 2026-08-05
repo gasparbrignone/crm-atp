@@ -347,6 +347,63 @@ async function main() {
     });
   }
 
+  // Catálogo léxico del Motor de Resolución de Identidad —
+  // PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md sección 6: valores
+  // por defecto, editables desde la base sin tocar código (pedido explícito
+  // de Gaspar de no hardcodear estas listas). Nombres compuestos frecuentes
+  // en Argentina (para que el tokenizador no corte "José" de "Juan José"
+  // como si fuera apellido) y partículas de apellido (para que "de la Cruz"
+  // no se corte mal sin coma explícita en el texto original).
+  console.log("Sembrando catálogo léxico de identidad (nombres compuestos y partículas)...");
+  const NOMBRES_COMPUESTOS = [
+    "juan jose",
+    "juan ignacio",
+    "juan cruz",
+    "juan manuel",
+    "juan pablo",
+    "juan carlos",
+    "juan martin",
+    "jose maria",
+    "jose luis",
+    "jose antonio",
+    "maria jose",
+    "maria belen",
+    "maria del carmen",
+    "maria eugenia",
+    "maria fernanda",
+    "maria laura",
+    "maria victoria",
+    "maria sol",
+    "maria emilia",
+    "maria agustina",
+    "maria paz",
+    "ana paula",
+    "ana clara",
+    "ana maria",
+    "ana laura",
+    "luis alberto",
+    "carlos alberto",
+    "carlos alfredo",
+    "franco nicolas",
+    "nicolas gabriel",
+  ];
+  const PARTICULAS_APELLIDO = ["de la", "de los", "de las", "del", "de", "di", "van", "von", "mc", "mac"];
+
+  for (const valor of NOMBRES_COMPUESTOS) {
+    await prisma.lexicoNombrePropio.upsert({
+      where: { tipo_valor: { tipo: "nombre_compuesto", valor } },
+      update: {},
+      create: { tipo: "nombre_compuesto", valor, origen: "seed" },
+    });
+  }
+  for (const valor of PARTICULAS_APELLIDO) {
+    await prisma.lexicoNombrePropio.upsert({
+      where: { tipo_valor: { tipo: "particula_apellido", valor } },
+      update: {},
+      create: { tipo: "particula_apellido", valor, origen: "seed" },
+    });
+  }
+
   console.log("Seed de Fase 0 completado.");
 }
 

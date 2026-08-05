@@ -7,7 +7,12 @@ import {
   partialRatio,
   similitudPorIniciales,
 } from "./algoritmos";
-import { tokenizarNombrePersona, type NombrePersonaTokenizado } from "./normalizar";
+import {
+  tokenizarNombrePersona,
+  CATALOGO_LEXICO_VACIO,
+  type NombrePersonaTokenizado,
+  type CatalogoLexicoIdentidad,
+} from "./normalizar";
 
 // Motor de scoring del Identity Resolution Engine — capa 3 (ver
 // lib/identidad/README.md para el diagrama completo de arquitectura).
@@ -147,9 +152,10 @@ function compartenApellidoExacto(a: NombrePersonaTokenizado, b: NombrePersonaTok
 export function calcularConfianzaIdentidad(
   nombreCompletoA: string,
   nombreCompletoB: string,
+  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
 ): ResultadoScoring {
-  const a = tokenizarNombrePersona(nombreCompletoA);
-  const b = tokenizarNombrePersona(nombreCompletoB);
+  const a = tokenizarNombrePersona(nombreCompletoA, catalogoLexico);
+  const b = tokenizarNombrePersona(nombreCompletoB, catalogoLexico);
 
   const evidencias: EvidenciaSenal[] = [];
 

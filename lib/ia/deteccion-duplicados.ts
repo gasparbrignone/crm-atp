@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { evaluarCandidatos } from "@/lib/identidad/resolucion";
+import { clasificarConfianza } from "@/lib/identidad/politica-decision";
+import { CATALOGO_LEXICO_VACIO, type CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
 
 // Detección de duplicados — /15-ia.md sección 2. Señales por orden de
 // confianza (sección 2.2): DNI/legajo idéntico (determinístico) > teléfono
@@ -40,7 +42,12 @@ export type ResultadoBusquedaPersona =
   | { tipo: "sin_candidatos" }
   | { tipo: "ambiguo"; motivo: string; candidatos: CandidatoAmbiguo[] };
 
-function normalizarTelefono(telefono: string): string {
+// Distinta de normalizarTelefonoParaGuardar() de lib/ia/normalizacion.ts —
+// esta solo quita no-dígitos y ceros iniciales para comparar dos números
+// entre sí, no formatea a +54 9 para persistir (nombre explícito por
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md P9, para que la diferencia sea
+// obvia sin tener que leer el comentario).
+function normalizarTelefonoParaComparar(telefono: string): string {
   return telefono.replace(/\D/g, "").replace(/^0+/, "");
 }
 
@@ -68,7 +75,7 @@ async function buscarCoincidenciaDeterministica(
   }
 
   if (datos.telefono) {
-    const telefonoNormalizado = normalizarTelefono(datos.telefono);
+    const telefonoNormalizado = normalizarTelefonoParaComparar(datos.telefono);
     if (telefonoNormalizado.length >= 6) {
       const telefonos = await prisma.personaTelefono.findMany({
         where: { persona: { estadoFicha: { not: "fusionada" } } },
@@ -76,7 +83,7 @@ async function buscarCoincidenciaDeterministica(
       });
       const personaIdsCoincidentes = new Set(
         telefonos
-          .filter((t) => normalizarTelefono(t.numero) === telefonoNormalizado)
+          .filter((t) => normalizarTelefonoParaComparar(t.numero) === telefonoNormalizado)
           .map((t) => t.personaId),
       );
       if (personaIdsCoincidentes.size === 1) {
@@ -103,17 +110,34 @@ interface CandidatoParaComparar {
   emails: string[];
 }
 
+// Umbral de similitud del blocking (no confundir con `umbral_confianza_duplicados`,
+// que decide auto-vinculación sobre el resultado del motor de scoring — este
+// solo decide qué candidatos entran a compararse). Mismo valor y mismo patrón
+// de consulta (similarity + unaccent + lower) que ya usa busqueda.service.ts
+// sobre el índice GIN pg_trgm de la migración 20260802190000_buscador_trgm_unaccent,
+// instalado en producción desde la Fase 10 pero, hasta ahora, no reutilizado
+// acá — el blocking anterior (prefijo de 3 caracteres exactos, sensible a
+// errores de tipeo justo al principio del apellido) queda reemplazado por
+// esta consulta de similitud difusa. Ver PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md
+// sección 3.5.
+const UMBRAL_SIMILITUD_BLOCKING = 0.3;
+
 async function obtenerCandidatosPorApellido(apellido: string): Promise<CandidatoParaComparar[]> {
-  const prefijo = apellido.trim().slice(0, 3);
-  if (prefijo.length < 2) return [];
+  const termino = apellido.trim();
+  if (termino.length < 2) return [];
+
+  const coincidencias = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Persona"
+    WHERE "estadoFicha" != 'fusionada'
+      AND similarity(unaccent(lower(apellido)), unaccent(lower(${termino}))) > ${UMBRAL_SIMILITUD_BLOCKING}
+    ORDER BY similarity(unaccent(lower(apellido)), unaccent(lower(${termino}))) DESC
+    LIMIT 20
+  `;
+  if (coincidencias.length === 0) return [];
 
   const candidatos = await prisma.persona.findMany({
-    where: {
-      estadoFicha: { not: "fusionada" },
-      apellido: { startsWith: prefijo, mode: "insensitive" },
-    },
+    where: { id: { in: coincidencias.map((c) => c.id) } },
     include: { telefonos: true, emails: true },
-    take: 20,
   });
 
   return candidatos.map((p) => ({
@@ -138,11 +162,17 @@ async function obtenerCandidatosPorApellido(apellido: string): Promise<Candidato
 // determinística no puede tener ese problema por definición, y además ahora
 // es testeable con casos fijos (ver tests/unit/identidad/). Sin DNI ni
 // teléfono exacto disponible, si no hay ningún candidato con apellido
-// parecido es alta nueva segura; si hay alguno pero la confianza calculada
-// no alcanza el umbral, es un caso ambiguo para revisión humana.
+// parecido es alta nueva segura; si el mejor candidato tiene una confianza
+// por debajo del piso de politica-decision.ts, también (ninguna evidencia
+// real de coincidencia — hasta el 2026-08-04 este módulo no tenía ese piso,
+// a diferencia de matching-padron.ts, así que una coincidencia casi nula
+// (ej. 5%) igual se mostraba como sugerencia ambigua; ver
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.6, P4); entre el piso
+// y el umbral configurado, es un caso ambiguo para revisión humana.
 async function buscarCoincidenciaPorSimilitudDeNombre(
   datos: DatosPersonaAComparar,
   umbral: number,
+  catalogoLexico: CatalogoLexicoIdentidad,
 ): Promise<ResultadoBusquedaPersona> {
   const candidatos = await obtenerCandidatosPorApellido(datos.apellido);
   if (candidatos.length === 0) return { tipo: "sin_candidatos" };
@@ -158,14 +188,23 @@ async function buscarCoincidenciaPorSimilitudDeNombre(
   const { mejor } = evaluarCandidatos(
     nombreObjetivo,
     candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}` })),
+    catalogoLexico,
   );
+  // candidatos.length > 0 acá (ya se descartó el caso vacío arriba), así que
+  // evaluarCandidatos() siempre devuelve un `mejor` no nulo — este chequeo es
+  // solo para que TypeScript lo sepa también (mismo supuesto que ya asumía
+  // el código anterior a esta política centralizada).
+  if (!mejor) return { tipo: "sin_candidatos" };
 
-  if (!mejor || mejor.confianza < umbral) {
+  const decision = clasificarConfianza(mejor.confianza, umbral);
+
+  if (decision === "descarte") {
+    return { tipo: "sin_candidatos" };
+  }
+  if (decision === "revision") {
     return {
       tipo: "ambiguo",
-      motivo: mejor
-        ? `Coincidencia de baja confianza (${Math.round(mejor.confianza * 100)}%): ${mejor.explicacion.join("; ")}`
-        : "Ningún candidato parecido es razonablemente la misma persona.",
+      motivo: `Coincidencia de baja confianza (${Math.round(mejor.confianza * 100)}%): ${mejor.explicacion.join("; ")}`,
       candidatos: candidatosParaMostrar,
     };
   }
@@ -185,9 +224,17 @@ async function buscarCoincidenciaPorSimilitudDeNombre(
 export async function buscarPersonaCoincidente(
   datos: DatosPersonaAComparar,
   umbral: number,
+  // Opcional por el mismo motivo que `umbral` en resolverOCrearPersona
+  // (personas.service.ts): un caller de N filas (importación CSV) debe
+  // pasar un catálogo ya cargado una sola vez, no re-consultar
+  // LexicoNombrePropio en cada fila. Un caller de una sola vez (alta manual)
+  // puede omitirlo — sin catálogo, el motor sigue funcionando con la
+  // heurística posicional simple (comportamiento previo a
+  // PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md), no rompe nada.
+  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
 ): Promise<ResultadoBusquedaPersona> {
   const coincidenciaDeterministica = await buscarCoincidenciaDeterministica(datos);
   if (coincidenciaDeterministica) return coincidenciaDeterministica;
 
-  return buscarCoincidenciaPorSimilitudDeNombre(datos, umbral);
+  return buscarCoincidenciaPorSimilitudDeNombre(datos, umbral, catalogoLexico);
 }

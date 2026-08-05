@@ -26,6 +26,7 @@ import {
 } from "../lib/identidad/algoritmos";
 import { tokenizarNombrePersona } from "../lib/identidad/normalizar";
 import { calcularConfianzaIdentidad } from "../lib/identidad/motor-scoring";
+import { evaluarPoda } from "../lib/identidad/poda";
 
 // ── 1. Corpus base de nombres reales argentinos (dominio público, sin datos
 // de personas reales del sistema) — usados como "personas canónicas" para
@@ -220,6 +221,48 @@ function generarCorpus(): ParEvaluado[] {
     categoria: "apellido_parecido_no_igual",
   });
 
+  // Casos reales reportados por Gaspar 2026-08-05 — falsos positivos del
+  // blocking anterior (similitud de trigramas sobre campo completo, que se
+  // vuelve indulgente con apellidos cortos que comparten sufijos comunes
+  // del español). La etapa de poda (lib/identidad/poda.ts) debe eliminar
+  // estos ANTES de llegar al scoring — ver sección dedicada más abajo en el
+  // reporte, no solo la tabla de precisión/recall del motor combinado.
+  pares.push(
+    {
+      a: "Abella Irene",
+      b: "Dorado Antonella",
+      esMismaPersona: false,
+      categoria: "poda_debe_eliminar_falso_positivo_trigram",
+    },
+    {
+      a: "Martina Sol Ferreyra",
+      b: "Bruno Santiago Ortiz",
+      esMismaPersona: false,
+      categoria: "poda_debe_eliminar_falso_positivo_trigram",
+    },
+    {
+      a: "Diego Torres",
+      b: "Federico Nunez",
+      esMismaPersona: false,
+      categoria: "poda_debe_eliminar_falso_positivo_trigram",
+    },
+  );
+
+  // Mismo origen (reporte real), pero el candidato SÍ comparte un token
+  // fuerte (el nombre de pila "Abril") — la poda debe dejarlo vivo por
+  // diseño (pedido explícito: prioriza recall, esta etapa sola no resuelve
+  // que un nombre de pila común compartido no alcanza como evidencia; eso
+  // es responsabilidad del motor de evidencia, todavía no implementado).
+  // Se agrega como categoría separada para verificar el comportamiento
+  // correcto de CADA etapa por separado: la poda no debe eliminarlo, y el
+  // motor de scoring actual (ya validado) debe seguir sin auto-vincularlo.
+  pares.push({
+    a: "Abril Nicolas",
+    b: "Abril Soto",
+    esMismaPersona: false,
+    categoria: "poda_sobrevive_scoring_decide",
+  });
+
   return pares;
 }
 
@@ -337,6 +380,67 @@ function main() {
 
     lineas.push(
       `| ${algoritmo.nombre} | ${fmt(metricas.precision)} | ${fmt(metricas.recall)} | ${fmt(metricas.f1)} | ${metricas.umbral} | ${tiempoPor1000.toFixed(2)} |`,
+    );
+  }
+
+  lineas.push("");
+  lineas.push("## Etapa de poda (candidate pruning) — casos reales reportados 2026-08-05");
+  lineas.push("");
+  lineas.push(
+    "Ver `lib/identidad/poda.ts` y `PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md`. Corre ANTES del scoring, sobre el universo ya acotado por el blocking en base de datos — descarta candidatos sin ningún token compartido ni similitud real de apellido (distancia de edición absoluta, no similitud normalizada). Deliberadamente permisiva: dos verificaciones separadas abajo, una por cada comportamiento que tiene que cumplir.",
+  );
+  lineas.push("");
+  const casosDebeEliminar = corpus.filter((p) => p.categoria === "poda_debe_eliminar_falso_positivo_trigram");
+  const eliminadosCorrectamente = casosDebeEliminar.filter(
+    (p) => !evaluarPoda(p.a, p.b).sobrevive,
+  ).length;
+  lineas.push(
+    `**Casos que debe eliminar** (falsos positivos reales del blocking anterior por trigram): ${eliminadosCorrectamente}/${casosDebeEliminar.length} eliminados correctamente.`,
+  );
+  lineas.push("");
+  lineas.push("| Par | ¿Sobrevive la poda? | ¿Correcto? |");
+  lineas.push("|---|---|---|");
+  for (const caso of casosDebeEliminar) {
+    const r = evaluarPoda(caso.a, caso.b);
+    lineas.push(
+      `| "${caso.a}" vs "${caso.b}" | ${r.sobrevive ? "sí" : "no"} (${r.motivo}) | ${!r.sobrevive ? "✔" : "✘ ERROR — debería haberse eliminado"} |`,
+    );
+  }
+  lineas.push("");
+
+  const positivosCorpus = corpus.filter((p) => p.esMismaPersona);
+  const positivosQueSobreviven = positivosCorpus.filter((p) => evaluarPoda(p.a, p.b).sobrevive).length;
+  const casosSobreviveScoringDecide = corpus.filter((p) => p.categoria === "poda_sobrevive_scoring_decide");
+  const sobrevivenComoEsperado = casosSobreviveScoringDecide.filter((p) => evaluarPoda(p.a, p.b).sobrevive).length;
+  const casosMismoApellido = corpus.filter((p) => p.categoria === "mismo_apellido_persona_distinta");
+  const mismoApellidoSobrevive = casosMismoApellido.filter((p) => evaluarPoda(p.a, p.b).sobrevive).length;
+  const casosApellidoParecido = corpus.filter((p) => p.categoria === "apellido_parecido_no_igual");
+  const apellidoParecidoSobrevive = casosApellidoParecido.filter((p) => evaluarPoda(p.a, p.b).sobrevive).length;
+  lineas.push(
+    `**No debe perder recall** (verificación de que la poda no se volvió conservadora sin querer):`,
+  );
+  lineas.push("");
+  lineas.push(
+    `- Positivos del corpus (misma persona, cualquier variante): ${positivosQueSobreviven}/${positivosCorpus.length} sobreviven la poda.`,
+  );
+  lineas.push(
+    `- "poda_sobrevive_scoring_decide" (ej. "Abril Nicolas"/"Abril Soto" — comparten nombre de pila, la poda no debe resolver esto sola): ${sobrevivenComoEsperado}/${casosSobreviveScoringDecide.length} sobreviven.`,
+  );
+  lineas.push(
+    `- "mismo_apellido_persona_distinta" (Cejas, Barroso, Chazarreta — deben seguir llegando al scoring, que ya sabe manejarlos): ${mismoApellidoSobrevive}/${casosMismoApellido.length} sobreviven.`,
+  );
+  lineas.push(
+    `- "apellido_parecido_no_igual" (Fernandez/Hernandez y similares — variantes de tipeo reales, nunca deben perderse en la poda): ${apellidoParecidoSobrevive}/${casosApellidoParecido.length} sobreviven.`,
+  );
+  if (
+    positivosQueSobreviven < positivosCorpus.length ||
+    sobrevivenComoEsperado < casosSobreviveScoringDecide.length ||
+    mismoApellidoSobrevive < casosMismoApellido.length ||
+    apellidoParecidoSobrevive < casosApellidoParecido.length
+  ) {
+    lineas.push("");
+    lineas.push(
+      "**⚠ ALERTA: la poda está eliminando casos que debería dejar vivos — revisar `lib/identidad/poda.ts` antes de dar por buena esta etapa.**",
     );
   }
 

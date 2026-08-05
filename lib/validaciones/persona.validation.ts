@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   normalizarNombrePropio,
-  normalizarTelefono,
+  normalizarTelefonoParaGuardar,
   normalizarEmail,
 } from "@/lib/ia/normalizacion";
 
@@ -37,7 +37,7 @@ export const personaFormSchema = z.object({
     .refine((v) => v === undefined || (Number.isInteger(v) && v >= 1 && v <= 6), {
       message: "El año debe estar entre 1 y 6.",
     }),
-  telefono: opcional.transform((v) => (v ? normalizarTelefono(v) : v)),
+  telefono: opcional.transform((v) => (v ? normalizarTelefonoParaGuardar(v) : v)),
   email: opcional
     .pipe(z.string().email("Email inválido.").optional())
     .transform((v) => (v ? normalizarEmail(v) : v)),

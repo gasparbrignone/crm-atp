@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma/client";
 import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { buscarPersonaCoincidente, obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
+import { obtenerCatalogoLexicoIdentidad } from "@/lib/servicios/lexico-identidad.service";
 import {
   normalizarNombrePropio,
-  normalizarTelefono,
+  normalizarTelefonoParaGuardar,
   normalizarEmail,
 } from "@/lib/ia/normalizacion";
 import { revincularPersonaNuevaConPadronesPendientes } from "@/lib/servicios/padron.service";
@@ -359,6 +360,7 @@ export async function importarParticipacionesCsv({
   });
 
   const umbral = await obtenerUmbralConfianzaDuplicados();
+  const catalogoLexico = await obtenerCatalogoLexicoIdentidad();
   let exitosas = 0;
   let conError = 0;
   let altasNuevas = 0;
@@ -402,7 +404,7 @@ export async function importarParticipacionesCsv({
     // el mismo formato.
     datos.nombre = normalizarNombrePropio(datos.nombre);
     datos.apellido = normalizarNombrePropio(datos.apellido);
-    if (datos.telefono) datos.telefono = normalizarTelefono(datos.telefono);
+    if (datos.telefono) datos.telefono = normalizarTelefonoParaGuardar(datos.telefono);
     if (datos.email) datos.email = normalizarEmail(datos.email);
 
     try {
@@ -415,6 +417,7 @@ export async function importarParticipacionesCsv({
           dni: datos.dni,
         },
         umbral,
+        catalogoLexico,
       );
 
       if (resultado.tipo === "ambiguo") {
@@ -443,9 +446,11 @@ export async function importarParticipacionesCsv({
             creadoPorId: usuarioId,
             modificadoPorId: usuarioId,
             telefonos: datos.telefono
-              ? { create: [{ numero: datos.telefono, esPrincipal: true }] }
+              ? { create: [{ numero: datos.telefono, esPrincipal: true, origen: "importacion_actividad" }] }
               : undefined,
-            emails: datos.email ? { create: [{ email: datos.email, esPrincipal: true }] } : undefined,
+            emails: datos.email
+              ? { create: [{ email: datos.email, esPrincipal: true, origen: "importacion_actividad" }] }
+              : undefined,
           },
         });
         await registrarCambio({

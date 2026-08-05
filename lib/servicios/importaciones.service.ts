@@ -5,6 +5,9 @@ import { registrarCambio } from "@/lib/servicios/auditoria.service";
 import { notificarImportacionFinalizada } from "@/lib/servicios/notificaciones.service";
 import { personaFormSchema } from "@/lib/validaciones/persona.validation";
 import { resolverCarreraSemantica } from "@/lib/ia/normalizacion";
+import { resolverOCrearPersona } from "@/lib/servicios/personas.service";
+import { obtenerUmbralConfianzaDuplicados } from "@/lib/ia/deteccion-duplicados";
+import { obtenerCatalogoLexicoIdentidad } from "@/lib/servicios/lexico-identidad.service";
 import type { CampoPersonaImportable } from "@/lib/utils/csv-mapping";
 
 interface ProcesarImportacionCsvInput {
@@ -15,10 +18,14 @@ interface ProcesarImportacionCsvInput {
 }
 
 // Importación básica desde CSV — /14-importaciones-exportaciones.md sección 3
-// y 5. Sin matching inteligente (eso es Fase 7/8): el mapeo de columnas ya
-// viene resuelto desde la UI (sugerido por coincidencia de nombre, ajustable
-// a mano por el usuario). Cada fila pasa por la misma validación y la misma
-// regla de unicidad de DNI que el alta manual (RN-1, ver /04-modelo-datos.md).
+// y 5. El mapeo de columnas ya viene resuelto desde la UI (sugerido por
+// coincidencia de nombre, ajustable a mano por el usuario). Cada fila pasa
+// por la misma validación y la misma verificación de duplicados (DNI exacto
+// + nombre difuso vía el Motor de Resolución de Identidad, resolverOCrearPersona())
+// que el alta manual y la importación de inscriptos a Actividad — desde
+// 2026-08-04 las 3 vías de entrada de Personas comparten el mismo motor (ver
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.4; hasta entonces,
+// esta era la única que solo comparaba DNI).
 export async function procesarImportacionPersonasCsv({
   usuarioId,
   nombreArchivo,
@@ -51,6 +58,13 @@ export async function procesarImportacionPersonasCsv({
   const carreraPorNombre = new Map(
     carreras.map((c) => [c.nombre.trim().toLowerCase(), c.id]),
   );
+  // Una sola consulta para todo el archivo, no una por fila (auditoría
+  // 2026-08-04) — el umbral configurado no cambia en medio de una
+  // importación.
+  const umbral = await obtenerUmbralConfianzaDuplicados();
+  // Mismo criterio para el catálogo léxico (nombres compuestos/partículas) —
+  // ver PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md sección 6.
+  const catalogoLexico = await obtenerCatalogoLexicoIdentidad();
 
   const dnisEnEsteArchivo = new Set<string>();
   let exitosas = 0;
@@ -105,61 +119,54 @@ export async function procesarImportacionPersonasCsv({
       });
       continue;
     }
+    // carreraId no es un campo mapeable desde CSV (solo carreraTexto, ver
+    // csv-mapping.ts) — se resuelve aparte arriba y se inyecta acá para que
+    // viaje en el mismo objeto que resolverOCrearPersona()/crearPersona() ya
+    // saben persistir, en vez de un segundo UPDATE separado no atómico.
+    if (carreraId) parsed.data.carreraId = carreraId;
 
-    if (parsed.data.dni) {
-      if (dnisEnEsteArchivo.has(parsed.data.dni)) {
-        duplicados++;
-        conError++;
-        await prisma.importJobError.create({
-          data: {
-            importJobId: job.id,
-            numeroFila,
-            contenidoOriginal: JSON.stringify(fila),
-            mensajeError: `DNI duplicado dentro del mismo archivo (${parsed.data.dni}).`,
-          },
-        });
-        continue;
-      }
-      const existente = await prisma.persona.findFirst({
-        where: { dni: parsed.data.dni, estadoFicha: { not: "fusionada" } },
-      });
-      if (existente) {
-        duplicados++;
-        conError++;
-        await prisma.importJobError.create({
-          data: {
-            importJobId: job.id,
-            numeroFila,
-            contenidoOriginal: JSON.stringify(fila),
-            mensajeError: `Ya existe una persona con DNI ${parsed.data.dni} (${existente.nombre} ${existente.apellido}).`,
-          },
-        });
-        continue;
-      }
-      dnisEnEsteArchivo.add(parsed.data.dni);
-    }
-
-    try {
-      await prisma.persona.create({
+    // DNI repetido dentro del mismo archivo — chequeo previo y específico
+    // (mensaje más útil que el genérico de más abajo) antes de consultar el
+    // motor de identidad. No es redundante pese a que el motor también lo
+    // detectaría una vez que la primera fila con ese DNI ya esté persistida
+    // (el for procesa en serie): este chequeo cubre el caso, y da el mensaje
+    // correcto, sin depender de ese orden implícito.
+    if (parsed.data.dni && dnisEnEsteArchivo.has(parsed.data.dni)) {
+      duplicados++;
+      conError++;
+      await prisma.importJobError.create({
         data: {
-          nombre: parsed.data.nombre,
-          apellido: parsed.data.apellido,
-          dni: parsed.data.dni ?? null,
-          legajo: parsed.data.legajo ?? null,
-          carreraId: carreraId ?? null,
-          instagram: parsed.data.instagram ?? null,
-          observacionesGenerales: parsed.data.observacionesGenerales ?? null,
-          creadoPorId: usuarioId,
-          modificadoPorId: usuarioId,
-          telefonos: parsed.data.telefono
-            ? { create: [{ numero: parsed.data.telefono, esPrincipal: true }] }
-            : undefined,
-          emails: parsed.data.email
-            ? { create: [{ email: parsed.data.email, esPrincipal: true }] }
-            : undefined,
+          importJobId: job.id,
+          numeroFila,
+          contenidoOriginal: JSON.stringify(fila),
+          mensajeError: `DNI duplicado dentro del mismo archivo (${parsed.data.dni}).`,
         },
       });
-      exitosas++;
+      continue;
+    }
+
+    // Verificación de duplicados vía el Motor de Resolución de Identidad
+    // completo (DNI exacto + nombre difuso) — hasta acá esta importación
+    // comparaba SOLO DNI exacto, la única de las 3 vías de entrada de
+    // Personas que no usaba el motor completo (inconsistente entre sí y con
+    // /14-importaciones-exportaciones.md sección 9, que ya documentaba lo
+    // contrario — ver PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.4,
+    // P2). Una importación masiva no puede mostrar un diálogo interactivo
+    // como el alta manual: tanto una coincidencia fuerte ("vinculada", ya
+    // existe con confianza alta) como una ambigua se reportan como fila con
+    // error para revisión humana — ninguna crea una Persona nueva sola, ni
+    // se re-vincula sola a la existente, porque esta importación no crea
+    // ninguna relación (Participación, etc.) sobre la que "reusar el id"
+    // tendría sentido: acá "ya existe" es siempre motivo de no duplicar.
+    let resultado: Awaited<ReturnType<typeof resolverOCrearPersona>>;
+    try {
+      resultado = await resolverOCrearPersona(
+        parsed.data,
+        usuarioId,
+        "importacion_csv",
+        umbral,
+        catalogoLexico,
+      );
     } catch {
       conError++;
       await prisma.importJobError.create({
@@ -170,7 +177,38 @@ export async function procesarImportacionPersonasCsv({
           mensajeError: "No se pudo guardar la fila (error inesperado).",
         },
       });
+      continue;
     }
+
+    if (resultado.tipo === "vinculada") {
+      duplicados++;
+      conError++;
+      await prisma.importJobError.create({
+        data: {
+          importJobId: job.id,
+          numeroFila,
+          contenidoOriginal: JSON.stringify(fila),
+          mensajeError: `Ya existe una persona parecida (${resultado.motivo}).`,
+        },
+      });
+      continue;
+    }
+
+    if (resultado.tipo === "ambiguo") {
+      conError++;
+      await prisma.importJobError.create({
+        data: {
+          importJobId: job.id,
+          numeroFila,
+          contenidoOriginal: JSON.stringify(fila),
+          mensajeError: JSON.stringify({ motivo: resultado.motivo, candidatos: resultado.candidatos }),
+        },
+      });
+      continue;
+    }
+
+    if (parsed.data.dni) dnisEnEsteArchivo.add(parsed.data.dni);
+    exitosas++;
   }
 
   const jobFinal = await prisma.importJob.update({

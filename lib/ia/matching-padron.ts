@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma/client";
 import { evaluarCandidatos } from "@/lib/identidad/resolucion";
+import { clasificarConfianza } from "@/lib/identidad/politica-decision";
+import { CATALOGO_LEXICO_VACIO, type CatalogoLexicoIdentidad } from "@/lib/identidad/normalizar";
 
 // Matching de PadronEntrada contra Persona — /09-modulo-padron-electoral.md
 // sección 5: DNI exacto primero (señal determinística), después nombre
@@ -41,39 +43,50 @@ async function buscarPorDni(dni: string) {
 // compartían los nombres de pila "Ana"/"Paula"). El apellido sigue
 // buscándose contra ambos campos de la persona candidata, por si el orden
 // viniera invertido en algún caso.
+// Mismo umbral y mismo patrón de consulta (similarity + unaccent + lower
+// sobre el índice GIN pg_trgm ya instalado, ver busqueda.service.ts) que
+// deteccion-duplicados.ts — reemplaza el blocking anterior por tokens exactos
+// (`contains`), que perdía candidatos con errores de tipeo en el apellido y
+// no tenía tolerancia difusa real. Se sigue buscando el apellido contra
+// ambos campos (apellido Y nombre) de la persona candidata, por si el orden
+// viniera invertido — mismo criterio que antes, solo cambia el mecanismo de
+// comparación de "substring exacto" a "similitud de trigramas". Ver
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md sección 3.5.
+const UMBRAL_SIMILITUD_BLOCKING = 0.3;
+
 async function obtenerCandidatosPorNombre(nombreCompleto: string): Promise<CandidatoPadron[]> {
   const apellidoOriginal = (nombreCompleto.split(",")[0] ?? "").trim();
-  const tokensApellido = apellidoOriginal.split(/\s+/).filter((t) => t.length >= 3);
-  if (tokensApellido.length === 0) return [];
+  if (apellidoOriginal.length < 2) return [];
 
-  const candidatos = await prisma.persona.findMany({
-    where: {
-      estadoFicha: { not: "fusionada" },
-      OR: tokensApellido.flatMap((t) => [
-        { apellido: { contains: t, mode: "insensitive" as const } },
-        { nombre: { contains: t, mode: "insensitive" as const } },
-      ]),
-    },
+  const coincidencias = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT id FROM "Persona"
+    WHERE "estadoFicha" != 'fusionada'
+      AND (
+        similarity(unaccent(lower(apellido)), unaccent(lower(${apellidoOriginal}))) > ${UMBRAL_SIMILITUD_BLOCKING}
+        OR similarity(unaccent(lower(nombre)), unaccent(lower(${apellidoOriginal}))) > ${UMBRAL_SIMILITUD_BLOCKING}
+      )
+    ORDER BY GREATEST(
+      similarity(unaccent(lower(apellido)), unaccent(lower(${apellidoOriginal}))),
+      similarity(unaccent(lower(nombre)), unaccent(lower(${apellidoOriginal})))
+    ) DESC
+    LIMIT 20
+  `;
+  if (coincidencias.length === 0) return [];
+
+  return prisma.persona.findMany({
+    where: { id: { in: coincidencias.map((c) => c.id) } },
     select: { id: true, nombre: true, apellido: true, dni: true },
-    take: 20,
   });
-
-  return candidatos;
 }
-
-// Piso por debajo del cual el motor considera que no hay evidencia real de
-// coincidencia — coherente con la banda de "revisión manual" calibrada en
-// lib/identidad/BENCHMARK-RESULTADOS.md (0.4-umbral). Por debajo de este
-// piso es `sin_coincidencia` (descarte seguro, sin fricción de revisión
-// innecesaria — el mismo criterio que ya regía acá desde el bug real
-// 2026-08-02 de revisiones sin sentido por coincidencias espurias de un
-// token corto y común); entre el piso y el umbral configurado es `pendiente`
-// (hay evidencia real pero no alcanza para decidir solo).
-const CONFIANZA_MINIMA_PARA_REVISION = 0.4;
 
 export async function buscarPersonaParaEntradaPadron(
   entrada: { dni: string; nombreCompletoOriginal: string },
   umbral: number,
+  // Opcional, mismo motivo que en buscarPersonaCoincidente
+  // (lib/ia/deteccion-duplicados.ts): la carga de un padrón procesa miles de
+  // filas — el caller (padron.service.ts) carga el catálogo léxico una sola
+  // vez para todo el lote, no por fila.
+  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
 ): Promise<ResultadoMatchingPadron> {
   const porDni = await buscarPorDni(entrada.dni);
   if (porDni) {
@@ -91,12 +104,15 @@ export async function buscarPersonaParaEntradaPadron(
   const { mejor } = evaluarCandidatos(
     entrada.nombreCompletoOriginal,
     candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}` })),
+    catalogoLexico,
   );
 
-  if (!mejor || mejor.confianza < CONFIANZA_MINIMA_PARA_REVISION) {
+  const decision = mejor ? clasificarConfianza(mejor.confianza, umbral) : "descarte";
+
+  if (!mejor || decision === "descarte") {
     return { tipo: "sin_coincidencia" };
   }
-  if (mejor.confianza < umbral) {
+  if (decision === "revision") {
     return {
       tipo: "pendiente",
       motivo: `Coincidencia de confianza media (${Math.round(mejor.confianza * 100)}%): ${mejor.explicacion.join("; ")}`,
@@ -107,7 +123,7 @@ export async function buscarPersonaParaEntradaPadron(
   // No hace falta un chequeo adicional de "comparten nombre de pila" acá: la
   // compuerta determinística equivalente ya vive dentro del motor de scoring
   // (compartenTokenDeNombre en motor-scoring.ts) y ya topeó `mejor.confianza`
-  // a 0.6 en ese caso — si llegamos hasta acá con confianza >= umbral, es
+  // a 0.6 en ese caso — si llegamos hasta acá con decision === "auto", es
   // porque el motor ya verificó que el nombre de pila SÍ comparte evidencia
   // real, no solo el apellido.
   return { tipo: "vinculado_automatico", personaId: mejor.id, confianza: mejor.confianza };

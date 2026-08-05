@@ -1,4 +1,6 @@
 import { calcularConfianzaIdentidad, type ResultadoScoring } from "./motor-scoring";
+import { podarCandidatos } from "./poda";
+import { CATALOGO_LEXICO_VACIO, type CatalogoLexicoIdentidad } from "./normalizar";
 
 // Punto de entrada de más alto nivel del Motor de Resolución de Identidad —
 // capa 4 (ver lib/identidad/README.md). Reemplaza la llamada a un LLM que
@@ -49,11 +51,25 @@ export interface ResultadoMejorCoincidencia {
 export function evaluarCandidatos(
   nombreObjetivo: string,
   candidatos: CandidatoParaResolucion[],
+  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
 ): ResultadoMejorCoincidencia {
   if (candidatos.length === 0) return { mejor: null, todas: [] };
 
-  const todas: CoincidenciaEvaluada[] = candidatos.map((c) => {
-    const resultado: ResultadoScoring = calcularConfianzaIdentidad(nombreObjetivo, c.nombreCompleto);
+  // Etapa de poda (ver lib/identidad/poda.ts) — descarta antes del scoring
+  // los candidatos sin ningún token compartido ni similitud real de
+  // apellido. Deliberadamente permisiva: prioriza no perder un candidato
+  // dudoso por sobre no mostrar ruido, así que la mayoría de lo que
+  // sobrevivía el blocking sigue llegando acá — solo elimina lo que ningún
+  // humano consideraría revisar.
+  const sobrevivientes = podarCandidatos(nombreObjetivo, candidatos, catalogoLexico);
+  if (sobrevivientes.length === 0) return { mejor: null, todas: [] };
+
+  const todas: CoincidenciaEvaluada[] = sobrevivientes.map((c) => {
+    const resultado: ResultadoScoring = calcularConfianzaIdentidad(
+      nombreObjetivo,
+      c.nombreCompleto,
+      catalogoLexico,
+    );
     return { id: c.id, confianza: resultado.confianza, explicacion: resultado.explicacion };
   });
 

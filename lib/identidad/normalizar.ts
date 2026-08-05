@@ -2,6 +2,88 @@
 // Resolución de Identidad (ver /lib/identidad/README.md para la arquitectura
 // completa). Todo lo de acá es determinístico y puro.
 
+// Catálogo léxico configurable (nombres compuestos frecuentes y partículas
+// de apellido argentinas) — PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05.md
+// sección 6. Deliberadamente NO hardcodeado acá (pedido explícito de
+// Gaspar): esta capa sigue siendo pura y sin dependencias externas, recibe
+// el catálogo como dato desde quien la llama. Quien lo carga desde la base
+// real (tabla LexicoNombrePropio) es lib/servicios/lexico-identidad.service.ts
+// — nunca esta capa. Cada secuencia ya viene tokenizada y normalizada
+// (minúscula, sin acentos), en el orden en que debe fusionarse.
+export interface CatalogoLexicoIdentidad {
+  nombresCompuestos: string[][];
+  particulasApellido: string[][];
+}
+
+export const CATALOGO_LEXICO_VACIO: CatalogoLexicoIdentidad = {
+  nombresCompuestos: [],
+  particulasApellido: [],
+};
+
+// Fusiona corridas de tokens que coinciden con una secuencia del catálogo en
+// una sola unidad léxica (string con espacios adentro) — así "de la Cruz"
+// nunca se separa en tres tokens independientes que la heurística
+// posicional de más abajo pueda cortar mal, y "Juan José" nunca deja que
+// "José" caiga por error en el apellido. `exigirTokenSiguiente` es para
+// partículas: una partícula sin ningún apellido detrás ("de" solo, al final
+// del texto) no tiene sentido fusionarla sola.
+function fusionarSecuenciasConocidas(
+  tokens: string[],
+  secuencias: string[][],
+  exigirTokenSiguiente: boolean,
+): string[] {
+  if (secuencias.length === 0 || tokens.length === 0) return tokens;
+  // Más largas primero: si "de la" y "de" estuvieran ambas en el catálogo,
+  // preferir la coincidencia más específica.
+  const ordenadas = [...secuencias]
+    .filter((s) => s.length > 0)
+    .sort((a, b) => b.length - a.length);
+
+  const resultado: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    let fusiono = false;
+    for (const secuencia of ordenadas) {
+      const largo = secuencia.length;
+      if (i + largo > tokens.length) continue;
+      if (exigirTokenSiguiente && i + largo >= tokens.length) continue;
+      let coincide = true;
+      for (let k = 0; k < largo; k++) {
+        if (tokens[i + k] !== secuencia[k]) {
+          coincide = false;
+          break;
+        }
+      }
+      if (!coincide) continue;
+
+      if (exigirTokenSiguiente) {
+        resultado.push([...secuencia, tokens[i + largo]].join(" "));
+        i += largo + 1;
+      } else {
+        resultado.push(secuencia.join(" "));
+        i += largo;
+      }
+      fusiono = true;
+      break;
+    }
+    if (!fusiono) {
+      resultado.push(tokens[i]);
+      i++;
+    }
+  }
+  return resultado;
+}
+
+// Aplica la fusión léxica completa: primero partículas de apellido (que
+// exigen un token detrás para tener sentido), después nombres compuestos.
+// Orden importante: una partícula fusionada primero deja al nombre
+// compuesto trabajar sobre unidades ya correctas si ambos catálogos
+// coincidieran en una posición ambigua (caso raro, pero determinístico).
+function aplicarCatalogoLexico(tokens: string[], catalogo: CatalogoLexicoIdentidad): string[] {
+  const conParticulas = fusionarSecuenciasConocidas(tokens, catalogo.particulasApellido, true);
+  return fusionarSecuenciasConocidas(conParticulas, catalogo.nombresCompuestos, false);
+}
+
 export interface NombrePersonaTokenizado {
   // Texto normalizado completo (para algoritmos que comparan strings enteros).
   textoCompleto: string;
@@ -45,7 +127,10 @@ function separarTokens(texto: string): string[] {
 // scoring (motor-scoring.ts) igual compara contra el conjunto completo de
 // tokens además de la partición nombre/apellido, para no depender
 // ciegamente de haber adivinado bien el orden.
-export function tokenizarNombrePersona(textoOriginal: string): NombrePersonaTokenizado {
+export function tokenizarNombrePersona(
+  textoOriginal: string,
+  catalogo: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
+): NombrePersonaTokenizado {
   const tieneComa = textoOriginal.includes(",");
   const [parteA, parteB] = textoOriginal.split(",");
 
@@ -56,18 +141,27 @@ export function tokenizarNombrePersona(textoOriginal: string): NombrePersonaToke
     // Las partículas ("de la Cruz", "del Valle") se conservan como parte del
     // apellido cuando hay coma explícita — es la señal más confiable de
     // dónde termina el apellido, no vale la pena adivinar mejor que eso acá.
-    tokensApellido = separarTokens(parteA);
-    tokensNombre = separarTokens(parteB);
+    // Igual se pasa por el catálogo léxico, por si el apellido en sí trae un
+    // nombre compuesto raro del otro lado de la coma (caso infrecuente, pero
+    // sin costo adicional cubrirlo).
+    tokensApellido = aplicarCatalogoLexico(separarTokens(parteA), catalogo);
+    tokensNombre = aplicarCatalogoLexico(separarTokens(parteB), catalogo);
   } else {
-    const todos = separarTokens(textoOriginal);
+    // Fusión léxica ANTES de la heurística posicional (ver
+    // aplicarCatalogoLexico): "Juan José Pérez" pasa a ser 2 unidades
+    // ("juan jose", "perez"), no 3 tokens sueltos — así el nombre compuesto
+    // nunca cae por error en el apellido, y "de la Cruz" nunca se corta a
+    // mitad de la partícula.
+    const todos = aplicarCatalogoLexico(separarTokens(textoOriginal), catalogo);
     if (todos.length <= 2) {
       tokensNombre = todos.slice(0, 1);
       tokensApellido = todos.slice(1);
     } else {
-      // 3+ tokens sin coma: se asume 1 nombre + resto apellido si el
-      // resultado parece razonable, salvo 4+ tokens donde es más común
+      // 3+ unidades sin coma: se asume 1 nombre + resto apellido si el
+      // resultado parece razonable, salvo 4+ unidades donde es más común
       // "nombre + segundo nombre + apellido + apellido materno" —
-      // conservador: los últimos dos tokens son apellido cuando hay 4 o más.
+      // conservador: las últimas dos unidades son apellido cuando hay 4 o
+      // más.
       const cantidadApellido = todos.length >= 4 ? 2 : 1;
       tokensNombre = todos.slice(0, todos.length - cantidadApellido);
       tokensApellido = todos.slice(todos.length - cantidadApellido);

@@ -1,6 +1,7 @@
 import { distanciaDamerauLevenshtein } from "./algoritmos";
 import {
   tokenizarNombrePersona,
+  tokenizarPersonaEstructurada,
   CATALOGO_LEXICO_VACIO,
   type CatalogoLexicoIdentidad,
 } from "./normalizar";
@@ -105,6 +106,14 @@ export function evaluarPoda(
   opciones: {
     encontradoPorMasDeUnaEstrategia?: boolean;
     catalogoLexico?: CatalogoLexicoIdentidad;
+    // Si el candidato viene de una fila estructurada de Persona (el caso
+    // real siempre en este sistema), tokenizarlo con la partición YA
+    // CONOCIDA en vez de re-adivinarla de `nombreCandidato` como si fuera
+    // texto libre — mismo motivo que en motor-scoring.ts
+    // (calcularConfianzaIdentidadEntreTokenizados), ver el comentario
+    // extenso en tokenizarPersonaEstructurada() (normalizar.ts) sobre el
+    // bug real 2026-08-05 que esto evita.
+    candidatoEstructurado?: { nombre: string; apellido: string };
   } = {},
 ): ResultadoPoda {
   if (opciones.encontradoPorMasDeUnaEstrategia) {
@@ -116,7 +125,13 @@ export function evaluarPoda(
 
   const catalogo = opciones.catalogoLexico ?? CATALOGO_LEXICO_VACIO;
   const a = tokenizarNombrePersona(nombreObjetivo, catalogo);
-  const b = tokenizarNombrePersona(nombreCandidato, catalogo);
+  const b = opciones.candidatoEstructurado
+    ? tokenizarPersonaEstructurada(
+        opciones.candidatoEstructurado.nombre,
+        opciones.candidatoEstructurado.apellido,
+        catalogo,
+      )
+    : tokenizarNombrePersona(nombreCandidato, catalogo);
 
   const tokenFuerte = tokenFuerteCompartido(a.tokens, b.tokens);
   if (tokenFuerte) {
@@ -142,12 +157,17 @@ export function evaluarPoda(
 // Los candidatos que no sobreviven quedan completamente fuera — nunca
 // llegan al scoring ni pueden aparecer en la lista que ve el operador,
 // independientemente de qué score numérico hubieran obtenido.
-export function podarCandidatos<T extends { nombreCompleto: string }>(
-  nombreObjetivo: string,
-  candidatos: T[],
-  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
-): T[] {
+export function podarCandidatos<
+  T extends { nombreCompleto: string; nombre?: string; apellido?: string },
+>(nombreObjetivo: string, candidatos: T[], catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO): T[] {
   return candidatos.filter(
-    (c) => evaluarPoda(nombreObjetivo, c.nombreCompleto, { catalogoLexico }).sobrevive,
+    (c) =>
+      evaluarPoda(nombreObjetivo, c.nombreCompleto, {
+        catalogoLexico,
+        candidatoEstructurado:
+          c.nombre !== undefined && c.apellido !== undefined
+            ? { nombre: c.nombre, apellido: c.apellido }
+            : undefined,
+      }).sobrevive,
   );
 }

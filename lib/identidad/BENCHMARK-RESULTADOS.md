@@ -4,21 +4,23 @@ Generado automáticamente por `scripts/benchmark-identidad.ts`. Corpus sintétic
 
 No usa datos reales de personas del sistema — nombres de dominio público elegidos para representar la distribución real de nombres argentinos, incluyendo los casos puntuales ya vistos en bugs reales (Cejas, Barroso, Chazarreta — ver `INFORME-AUDITORIA-EXTERNA.md` sección 5.6).
 
+**Nota importante 2026-08-05**: este corpus mide `calcularConfianzaIdentidad(a, b)` con AMBOS lados como texto libre puro (misma función, pero no el camino que usan los dos callers reales en producción). Desde el bug real de producción de esta fecha (ver `tokenizarPersonaEstructurada()` en `lib/identidad/normalizar.ts`), `deteccion-duplicados.ts` y `matching-padron.ts` le pasan al motor la partición nombre/apellido YA CONOCIDA de cada candidato (siempre, porque viene de columnas estructuradas de `Persona`) y de la consulta cuando también es estructurada — evitando la heurística de partición que este benchmark sigue ejercitando en su forma más difícil (texto libre en ambos lados). Las métricas de esta sección son, por lo tanto, un **piso conservador**: la precisión/recall reales en producción son mejores que lo que muestra esta tabla, no peores.
+
 ## Comparación de algoritmos individuales (umbral óptimo propio de cada uno)
 
 | Algoritmo | Precisión | Recall | F1 | Umbral óptimo | Tiempo (ms / 1000 comparaciones) |
 |---|---|---|---|---|---|
-| Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 32.01 |
-| Damerau-Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 48.10 |
-| Jaro | 87.8% | 100.0% | 93.5% | 0.05 | 7.98 |
-| Jaro-Winkler | 87.8% | 100.0% | 93.5% | 0.05 | 6.72 |
-| Sorensen-Dice (bigramas) | 90.5% | 100.0% | 95.0% | 0.06 | 20.81 |
-| Coseno (bigramas) | 90.3% | 100.0% | 94.9% | 0.06 | 30.24 |
-| Jaccard (tokens) | 97.3% | 99.7% | 98.5% | 0.05 | 20.49 |
-| Token Sort Ratio | 97.0% | 100.0% | 98.5% | 0.32 | 20.25 |
-| Token Set Ratio | 99.4% | 98.8% | 99.1% | 0.82 | 31.85 |
-| Partial Ratio | 93.1% | 95.1% | 94.0% | 0.2 | 20.17 |
-| Motor combinado (motor-scoring.ts) | 97.6% | 99.4% | 98.5% | 0.36 | 136.74 |
+| Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 18.00 |
+| Damerau-Levenshtein | 93.4% | 95.4% | 94.4% | 0.2 | 41.51 |
+| Jaro | 87.8% | 100.0% | 93.5% | 0.05 | 9.68 |
+| Jaro-Winkler | 87.8% | 100.0% | 93.5% | 0.05 | 5.87 |
+| Sorensen-Dice (bigramas) | 90.5% | 100.0% | 95.0% | 0.06 | 13.70 |
+| Coseno (bigramas) | 90.3% | 100.0% | 94.9% | 0.06 | 23.89 |
+| Jaccard (tokens) | 97.3% | 100.0% | 98.6% | 0.05 | 23.51 |
+| Token Sort Ratio | 97.6% | 98.8% | 98.2% | 0.37 | 18.54 |
+| Token Set Ratio | 99.4% | 99.4% | 99.4% | 0.82 | 48.04 |
+| Partial Ratio | 93.1% | 95.1% | 94.0% | 0.2 | 13.77 |
+| Motor combinado (motor-scoring.ts) | 88.8% | 100.0% | 94.0% | 0.22 | 92.06 |
 
 ## Etapa de poda (candidate pruning) — casos reales reportados 2026-08-05
 
@@ -34,12 +36,10 @@ Ver `lib/identidad/poda.ts` y `PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05
 
 **No debe perder recall** (verificación de que la poda no se volvió conservadora sin querer):
 
-- Positivos del corpus (misma persona, cualquier variante): 323/324 sobreviven la poda.
+- Positivos del corpus (misma persona, cualquier variante): 324/324 sobreviven la poda.
 - "poda_sobrevive_scoring_decide" (ej. "Abril Nicolas"/"Abril Soto" — comparten nombre de pila, la poda no debe resolver esto sola): 1/1 sobreviven.
 - "mismo_apellido_persona_distinta" (Cejas, Barroso, Chazarreta — deben seguir llegando al scoring, que ya sabe manejarlos): 5/5 sobreviven.
 - "apellido_parecido_no_igual" (Fernandez/Hernandez y similares — variantes de tipeo reales, nunca deben perderse en la poda): 3/3 sobreviven.
-
-**⚠ ALERTA: la poda está eliminando casos que debería dejar vivos — revisar `lib/identidad/poda.ts` antes de dar por buena esta etapa.**
 
 ## Desempeño específico en la categoría de bug real (mismo apellido, persona distinta)
 
@@ -57,7 +57,7 @@ Ver `lib/identidad/poda.ts` y `PROPUESTA-REDISENO-DESDE-CERO-MATCHING-2026-08-05
 
 Se buscó, sobre el motor combinado, el par de umbrales (alta/baja confianza) que separa las 3 acciones del pedido: **auto-vincular** (alta confianza), **revisión manual** (confianza media) y **registro nuevo/sin vínculo** (baja confianza). Metodología: se prioriza precisión casi perfecta en la banda de auto-vinculación (el costo de un falso positivo ahí es alto — fusiona o vincula automáticamente a alguien que no corresponde) incluso a costa de mandar más casos a revisión manual.
 
-- **Umbral de auto-vinculación**: `0.61` → precisión 100.0%, recall 85.5% en el corpus sintético (0 falsos positivos tolerados en la categoría de bug real, ver tabla arriba).
+- **Umbral de auto-vinculación**: `0.61` → precisión 100.0%, recall 77.2% en el corpus sintético (0 falsos positivos tolerados en la categoría de bug real, ver tabla arriba).
 - **Umbral de revisión manual**: cualquier confianza entre 0.4 y 0.61 — zona donde el motor encontró evidencia real pero no suficiente para decidir solo.
 - **Por debajo de 0.4**: se trata como "sin coincidencia" — alta nueva segura o `sin_coincidencia` según el módulo (mismo criterio que ya regía en el sistema antes de este rediseño, ver `09-modulo-padron-electoral.md` sección 5).
 

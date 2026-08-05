@@ -164,43 +164,59 @@ function similitudConservadora(a: string, b: string): number {
   return Math.min(similitudJaroWinkler(a, b), coeficienteDice(a, b));
 }
 
-// Mejor similitud DIFUSA (conservadora) entre el/los tokens de apellido de
-// un lado y el CONJUNTO COMPLETO de tokens del otro — mismo patrón que
-// compartenApellidoExacto (deliberadamente NO apellido-contra-apellido,
-// para no heredar errores de partición de tokenizarNombrePersona: "Juan
-// Perez" vs "Juan Perez Garcia" no puede fallar por un error de partición,
-// solo por una diferencia real). Se usa como señal de "¿hay ALGUNA relación
-// real entre los apellidos?", distinta del veto binario de arriba — acá
-// interesa el valor de similitud, no solo si es exacta.
-function mejorSimilitudApellidoContraTodos(
-  a: NombrePersonaTokenizado,
-  b: NombrePersonaTokenizado,
-): number {
+// Mejor similitud DIFUSA (conservadora) entre los tokens de apellido de un
+// lado y del otro — DIRECTA (apellido-contra-apellido), no "contra el
+// conjunto completo de tokens" como compartenApellidoExacto.
+//
+// Segunda vuelta de este diseño (bug real 2026-08-05, ver
+// tokenizarPersonaEstructurada() en normalizar.ts): la primera versión
+// buscaba contra el conjunto COMPLETO de tokens del otro lado, mismo patrón
+// que compartenApellidoExacto — necesario ahí porque compartenApellidoExacto
+// existe para tolerar que la PROPIA tokenización de alguno de los dos lados
+// se equivoque de partición (texto libre sin coma). Pero buscar "contra
+// todo" tiene un costo que compartenApellidoExacto no paga porque exige
+// coincidencia EXACTA: con similitud DIFUSA, un candidato cuyo NOMBRE DE
+// PILA coincide con el APELLIDO de la consulta (caso real: "Abril, Nicolás
+// Germán" contra un candidato realmente apellidado "Ibarra" pero con
+// nombre de pila "Abril") pasaba esta compuerta por una autocoincidencia
+// exacta de "abril" contra "abril" — dos personas SIN relación real de
+// apellido, con un simple nombre de pila en común.
+//
+// La razón por la que ahora sí se puede comparar apellido-contra-apellido
+// DIRECTO sin heredar el problema de partición: desde
+// tokenizarPersonaEstructurada(), todo candidato real (siempre viene de
+// `Persona.nombre`/`Persona.apellido`, columnas estructuradas de la base)
+// tiene su partición CONOCIDA, no adivinada — ya no hace falta tolerar un
+// error de partición del candidato, porque no puede haber uno.
+function mejorSimilitudApellido(a: NombrePersonaTokenizado, b: NombrePersonaTokenizado): number {
   const apellidoA = a.tokensApellido.filter((t) => t.length >= 3);
   const apellidoB = b.tokensApellido.filter((t) => t.length >= 3);
   if (apellidoA.length === 0 && apellidoB.length === 0) return 1; // sin evidencia suficiente para vetar
+  if (apellidoA.length === 0 || apellidoB.length === 0) return 0;
 
   let mejor = 0;
   for (const ta of apellidoA) {
-    for (const tb of b.tokens) mejor = Math.max(mejor, similitudConservadora(ta, tb));
-  }
-  for (const tb of apellidoB) {
-    for (const ta of a.tokens) mejor = Math.max(mejor, similitudConservadora(tb, ta));
+    for (const tb of apellidoB) mejor = Math.max(mejor, similitudConservadora(ta, tb));
   }
   return mejor;
 }
 
-// Punto de entrada del motor: compara dos nombres completos (texto libre,
-// cualquier orden/formato) y devuelve una confianza 0-1 con desglose
-// explicable de cada señal que contribuyó.
-export function calcularConfianzaIdentidad(
-  nombreCompletoA: string,
-  nombreCompletoB: string,
-  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
+// Núcleo del motor: compara dos nombres YA TOKENIZADOS (ver
+// lib/identidad/normalizar.ts) y devuelve una confianza 0-1 con desglose
+// explicable. Separado de calcularConfianzaIdentidad() para que un caller
+// que YA conoce la partición nombre/apellido real de un lado (ej. un
+// candidato de la base, con columnas `Persona.nombre`/`Persona.apellido`
+// estructuradas) pueda tokenizarlo con `tokenizarPersonaEstructurada()` en
+// vez de volver a adivinar el orden con la heurística de texto libre — ver
+// el comentario extenso en esa función sobre el bug real 2026-08-05 que
+// motivó esta separación (dos personas distintas con un nombre de pila en
+// común terminaban pareciendo tener evidencia real de apellido, porque el
+// candidato se volvía a tokenizar como si fuera texto libre de origen
+// incierto, descartando la partición confiable que ya teníamos).
+export function calcularConfianzaIdentidadEntreTokenizados(
+  a: NombrePersonaTokenizado,
+  b: NombrePersonaTokenizado,
 ): ResultadoScoring {
-  const a = tokenizarNombrePersona(nombreCompletoA, catalogoLexico);
-  const b = tokenizarNombrePersona(nombreCompletoB, catalogoLexico);
-
   const evidencias: EvidenciaSenal[] = [];
 
   // 1. Apellido — señal ancla.
@@ -347,24 +363,20 @@ export function calcularConfianzaIdentidad(
   // (`PISO_CONFIANZA_REVISION` en politica-decision.ts), no solo por debajo
   // del umbral de auto-vinculación.
   //
-  // Usa `mejorSimilitudApellidoContraTodos` (apellido vs. CONJUNTO COMPLETO
-  // del otro lado), no `simApellido` (apellido-contra-apellido) — la primera
-  // versión de esta compuerta comparaba apellido contra apellido
-  // directamente y rompía el benchmark real (recall del motor combinado
-  // cayó de 98% a 93%): con nombres de 3 tokens sin coma que ganan un cuarto
-  // token (ej. "Candela Cejas" → "Candela Cejas Fernandez", categoría
-  // "apellido_materno_de_mas" del benchmark, MISMA persona), la heurística
-  // de partición reasigna qué tokens son apellido (`cantidadApellido` pasa
-  // de 1 a 2), y el apellido real ("Cejas") queda comparado contra un
-  // apellido distinto ("Fernandez") por un artefacto de partición, no por
-  // una diferencia real — exactamente el problema que `compartenApellidoExacto`
-  // ya evita comparando contra el conjunto completo en vez de partición
-  // contra partición. Con la señal robusta, "Cejas" se encuentra igual
-  // dentro del conjunto completo del otro lado y la compuerta no dispara.
-  // Umbral 0.5 y techo 0.35 calibrados contra scripts/benchmark-identidad.ts.
+  // Usa `mejorSimilitudApellido` (apellido-contra-apellido DIRECTO — ver el
+  // comentario extenso en esa función sobre por qué esto ya no hereda el
+  // problema de partición que motivó la versión anterior "contra el
+  // conjunto completo del otro lado": esa versión anterior, a su vez,
+  // permitía que un candidato cuyo NOMBRE DE PILA coincide con el APELLIDO
+  // de la consulta pasara la compuerta por una autocoincidencia — el bug
+  // real reportado 2026-08-05 ("Abril, Nicolás Germán" contra un candidato
+  // realmente apellidado "Ibarra" pero con nombre de pila "Abril" seguía
+  // en banda de revisión, 56%, porque "abril" se encontraba a sí mismo en
+  // el conjunto completo del candidato). Umbral 0.5 y techo 0.35 calibrados
+  // contra scripts/benchmark-identidad.ts.
   const SIN_RELACION_APELLIDO = 0.5;
   const TECHO_SIN_EVIDENCIA_APELLIDO = 0.35;
-  const simApellidoRobusta = mejorSimilitudApellidoContraTodos(a, b);
+  const simApellidoRobusta = mejorSimilitudApellido(a, b);
   if (simApellidoRobusta < SIN_RELACION_APELLIDO && confianza > TECHO_SIN_EVIDENCIA_APELLIDO) {
     confianza = TECHO_SIN_EVIDENCIA_APELLIDO;
     evidencias.push({
@@ -389,4 +401,21 @@ export function calcularConfianzaIdentidad(
   if (explicacion.length === 0) explicacion.push("✘ ninguna señal de coincidencia encontrada");
 
   return { confianza, evidencias, explicacion };
+}
+
+// Punto de entrada del motor para texto libre (cualquier orden/formato,
+// origen incierto — ej. una fila de padrón o un formulario): tokeniza
+// ambos lados con la heurística de tokenizarNombrePersona() y delega en
+// calcularConfianzaIdentidadEntreTokenizados(). Si alguno de los dos lados
+// ya tiene nombre/apellido conocidos por separado (ej. un candidato de la
+// base), usar tokenizarPersonaEstructurada() + calcularConfianzaIdentidadEntreTokenizados()
+// directamente en vez de esta función — ver comentario en esa función.
+export function calcularConfianzaIdentidad(
+  nombreCompletoA: string,
+  nombreCompletoB: string,
+  catalogoLexico: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
+): ResultadoScoring {
+  const a = tokenizarNombrePersona(nombreCompletoA, catalogoLexico);
+  const b = tokenizarNombrePersona(nombreCompletoB, catalogoLexico);
+  return calcularConfianzaIdentidadEntreTokenizados(a, b);
 }

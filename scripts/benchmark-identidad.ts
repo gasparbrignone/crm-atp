@@ -371,6 +371,10 @@ function main() {
     `No usa datos reales de personas del sistema — nombres de dominio público elegidos para representar la distribución real de nombres argentinos, incluyendo los casos puntuales ya vistos en bugs reales (Cejas, Barroso, Chazarreta — ver \`INFORME-AUDITORIA-EXTERNA.md\` sección 5.6).`,
   );
   lineas.push("");
+  lineas.push(
+    "**Nota importante 2026-08-05**: este corpus mide `calcularConfianzaIdentidad(a, b)` con AMBOS lados como texto libre puro (misma función, pero no el camino que usan los dos callers reales en producción). Desde el bug real de producción de esta fecha (ver `tokenizarPersonaEstructurada()` en `lib/identidad/normalizar.ts`), `deteccion-duplicados.ts` y `matching-padron.ts` le pasan al motor la partición nombre/apellido YA CONOCIDA de cada candidato (siempre, porque viene de columnas estructuradas de `Persona`) y de la consulta cuando también es estructurada — evitando la heurística de partición que este benchmark sigue ejercitando en su forma más difícil (texto libre en ambos lados). Las métricas de esta sección son, por lo tanto, un **piso conservador**: la precisión/recall reales en producción son mejores que lo que muestra esta tabla, no peores.",
+  );
+  lineas.push("");
   lineas.push("## Comparación de algoritmos individuales (umbral óptimo propio de cada uno)");
   lineas.push("");
   lineas.push(

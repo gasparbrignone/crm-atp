@@ -131,6 +131,44 @@ export function tokenizarCampoEstructurado(
   return aplicarCatalogoLexico(separarTokens(texto), catalogo);
 }
 
+// Tokeniza una Persona cuyo nombre y apellido YA SE CONOCEN por separado
+// (vienen de columnas estructuradas de la base, `Persona.nombre` /
+// `Persona.apellido` — nunca de texto libre ambiguo) — bug real 2026-08-05:
+// hasta esta función, `evaluarCandidatos` (resolucion.ts) colapsaba
+// `${candidato.nombre} ${candidato.apellido}` en un solo string y lo volvía
+// a partir con la heurística de `tokenizarNombrePersona()` (pensada para
+// texto libre de origen incierto), TIRANDO la partición ya confiable que
+// veníamos de la base para volver a adivinarla. La heurística re-derivada
+// coincide con la real casi siempre (2 tokens: nombre+apellido, el caso más
+// común), pero cuando no coincide produce un bug serio y específico en el
+// matching de padrón: si el nombre de pila de un candidato (ej. "Abril")
+// es también, casualmente, el apellido real de la persona del padrón que se
+// está buscando, el motor terminaba comparando el apellido real de la
+// consulta contra el nombre de pila mal-etiquetado de otra persona — dos
+// personas DISTINTAS con un nombre de pila en común terminaban pareciendo
+// tener "evidencia real de apellido". Usar la partición ya conocida en vez
+// de re-derivarla elimina esa clase de error de raíz para cualquier
+// candidato que venga de una fila estructurada de `Persona` (que es
+// siempre el caso real en este sistema — el único lado que necesita
+// heurística es el texto libre de origen incierto, ej. una fila de
+// padrón o un formulario).
+export function tokenizarPersonaEstructurada(
+  nombre: string,
+  apellido: string,
+  catalogo: CatalogoLexicoIdentidad = CATALOGO_LEXICO_VACIO,
+): NombrePersonaTokenizado {
+  const tokensNombre = tokenizarCampoEstructurado(nombre, catalogo);
+  const tokensApellido = tokenizarCampoEstructurado(apellido, catalogo);
+  const tokens = separarTokens(`${nombre} ${apellido}`);
+
+  return {
+    textoCompleto: tokens.join(" "),
+    tokens,
+    tokensApellido,
+    tokensNombre,
+  };
+}
+
 // El padrón universitario (ver /09-modulo-padron-electoral.md) trae el
 // nombre como "Apellido, Nombre" — si el texto original tiene una coma, esa
 // posición es una señal fuerte y confiable de dónde termina el apellido.

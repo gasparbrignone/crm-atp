@@ -186,8 +186,12 @@ async function buscarCoincidenciaPorSimilitudDeNombre(
   const nombreObjetivo = `${datos.nombre} ${datos.apellido}`;
   const { mejor } = evaluarCandidatos(
     nombreObjetivo,
-    candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}` })),
+    candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}`, nombre: c.nombre, apellido: c.apellido })),
     catalogoLexico,
+    // La consulta también viene de campos estructurados (formulario de alta
+    // /import), no hace falta adivinar su partición tampoco — ver comentario
+    // en evaluarCandidatos() (resolucion.ts).
+    { nombre: datos.nombre, apellido: datos.apellido },
   );
   // candidatos.length > 0 acá (ya se descartó el caso vacío arriba), así que
   // evaluarCandidatos() siempre devuelve un `mejor` no nulo — este chequeo es

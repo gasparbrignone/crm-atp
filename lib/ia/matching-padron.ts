@@ -98,7 +98,7 @@ export async function buscarPersonaParaEntradaPadron(
   // (lib/identidad/normalizar.ts) ya maneja ambos formatos.
   const { mejor } = evaluarCandidatos(
     entrada.nombreCompletoOriginal,
-    candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}` })),
+    candidatos.map((c) => ({ id: c.id, nombreCompleto: `${c.nombre} ${c.apellido}`, nombre: c.nombre, apellido: c.apellido })),
     catalogoLexico,
   );
 

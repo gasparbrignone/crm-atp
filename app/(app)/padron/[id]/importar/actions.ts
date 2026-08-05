@@ -32,9 +32,10 @@ export async function importarEntradasPadronCsvAction(
   return resultado;
 }
 
-// Primer paso: sube el PDF y calcula en cuántos lotes se va a leer. No llama
-// a la IA todavía — ver nota en padron.service.ts sobre por qué esto se
-// separó de la lectura en sí.
+// Primer paso: sube el PDF y calcula en cuántos lotes se va a leer. Todavía
+// no parsea nada — ver nota en padron.service.ts sobre por qué esto se
+// separó de la lectura en sí (que es 100% determinística, sin IA, desde
+// 2026-08-04 — lib/padron/lectura-padron.ts).
 export async function iniciarImportacionPadronPdfAction(
   padronId: string,
   nombreArchivo: string,

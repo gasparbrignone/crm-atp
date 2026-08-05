@@ -31,13 +31,17 @@ function esperar(ms: number) {
 }
 
 // Carga directa del padrón oficial en PDF — /09-modulo-padron-electoral.md
-// sección 4 y /15-ia.md sección 4. Se procesa lote por lote (un request de
-// servidor corto por vez) en vez de una sola llamada larga, porque este
-// proyecto corre en el plan gratuito de Vercel y la cuota gratuita de Gemini
-// puede hacer que la lectura completa de un padrón real tarde varios
-// minutos — mucho más de lo que aguanta una función serverless del plan
-// gratuito. Si un lote puntual falla (por ejemplo, un pico de la cuota), se
-// reintenta ese mismo lote automáticamente sin perder lo ya procesado.
+// sección 4. Lectura 100% determinística desde 2026-08-04 (lib/padron/lectura-padron.ts,
+// sin ninguna llamada a IA — ver CLAUDE.md sección 7, S6, y
+// PROPUESTA-REDISENO-IDENTIDAD-2026-08-04.md). Se procesa lote por lote (un
+// request de servidor corto por vez) en vez de una sola llamada larga
+// porque este proyecto corre en el plan gratuito de Vercel (límite real de
+// 300s por función, ver CLAUDE.md sección 10) y el matching de miles de
+// filas contra la base real puede tardar más que eso en una sola pasada —
+// ya no por cuota de un proveedor externo, sino por volumen de consultas a
+// Postgres. Si un lote puntual falla (por ejemplo, un corte transitorio de
+// conexión a la base), se reintenta ese mismo lote automáticamente sin
+// perder lo ya procesado.
 export function ImportadorPadronPdf({ padronId }: { padronId: string }) {
   const [paso, setPaso] = useState<Paso>("subir");
   const [nombreArchivo, setNombreArchivo] = useState("");
@@ -53,9 +57,9 @@ export function ImportadorPadronPdf({ padronId }: { padronId: string }) {
     for (;;) {
       let resultado = null;
       let intento = 0;
-      // Un lote puntual puede fallar por un pico de la cuota gratuita o un
-      // corte de la función por duración — no es un error del padrón en sí,
-      // así que se reintenta el mismo lote antes de rendirse.
+      // Un lote puntual puede fallar por un corte transitorio de conexión a
+      // la base o de la función por duración — no es un error del padrón en
+      // sí, así que se reintenta el mismo lote antes de rendirse.
       while (intento < REINTENTOS_MAXIMOS_POR_LOTE) {
         try {
           resultado = await procesarSiguienteLotePadronAction(padronId);
@@ -101,7 +105,7 @@ export function ImportadorPadronPdf({ padronId }: { padronId: string }) {
         setError(
           e instanceof Error
             ? e.message
-            : "No se pudo procesar el PDF. Puede ser un documento muy grande o un error temporal de la IA — probá de nuevo o con un archivo más chico.",
+            : "No se pudo procesar el PDF. Puede ser un documento muy grande o un error temporal de conexión — probá de nuevo o con un archivo más chico.",
         );
         setPaso("error");
       }
@@ -138,7 +142,7 @@ export function ImportadorPadronPdf({ padronId }: { padronId: string }) {
     return (
       <div className="flex flex-col items-center gap-3 py-8 text-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-borde border-t-primario" />
-        <p className="text-sm text-texto">Leyendo &ldquo;{nombreArchivo}&rdquo; con IA...</p>
+        <p className="text-sm text-texto">Leyendo &ldquo;{nombreArchivo}&rdquo;...</p>
         {progreso && progreso.lotesTotales > 0 && (
           <div className="flex w-full max-w-xs flex-col gap-1">
             <div className="h-2 w-full overflow-hidden rounded-full bg-fondo-hover">
@@ -164,7 +168,7 @@ export function ImportadorPadronPdf({ padronId }: { padronId: string }) {
     return (
       <div className="flex flex-col gap-4">
         <p className="text-sm text-texto">
-          La IA extrajo <strong className="text-exito">{resumen.procesadas} entradas</strong>
+          Se extrajeron <strong className="text-exito">{resumen.procesadas} entradas</strong>
           {resumen.omitidas > 0 && (
             <>
               , <strong className="text-error">{resumen.omitidas} omitidas</strong> por no poder leer

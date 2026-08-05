@@ -4,18 +4,19 @@ import { obtenerPadron } from "@/lib/servicios/padron.service";
 import { Card } from "@/components/ui/Card";
 import { SelectorFuenteImportacion } from "./SelectorFuenteImportacion";
 
-// El procesamiento de PDF ahora se hace lote por lote (ver
+// El procesamiento de PDF se hace lote por lote (ver
 // procesarSiguienteLotePadronAction), un request de servidor por lote, en
-// vez de una sola llamada — la lectura completa de un padrón real puede
-// tardar varios minutos contra la cuota gratuita de Gemini (15 req/min, ver
-// /15-ia.md sección 8), mucho más de lo que aguanta una sola función
-// serverless, pero cada lote individual entra cómodo en el máximo real del
+// vez de una sola llamada — la lectura del PDF en sí es 100% determinística
+// desde 2026-08-04 (lib/padron/lectura-padron.ts, sin IA, ver CLAUDE.md
+// sección 7 S6), pero el matching de miles de filas contra la base real
+// (miles de consultas a Postgres) puede tardar más que el máximo real del
 // plan gratuito de Vercel (Hobby, con Fluid Compute: 300s de default Y de
 // máximo — confirmado contra la documentación oficial 2026-08-02, no 60 ni
-// 800 como se asumió por error en intentos previos). Si un lote puntual se
-// pasa igual (un reintento largo por cuota), el cliente simplemente
-// reintenta ese mismo lote — no se pierde progreso porque cada lote se
-// cuenta como procesado recién cuando termina con éxito.
+// 800 como se asumió por error en intentos previos) si se hiciera todo en
+// una sola función. Cada lote individual entra cómodo en ese límite. Si un
+// lote puntual falla (corte transitorio de conexión), el cliente
+// simplemente reintenta ese mismo lote — no se pierde progreso porque cada
+// lote se cuenta como procesado recién cuando termina con éxito.
 export const maxDuration = 300;
 
 export default async function ImportarPadronPage({
